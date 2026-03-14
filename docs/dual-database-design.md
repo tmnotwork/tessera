@@ -134,15 +134,68 @@ subjects → knowledge → memorization_cards → questions → question_choices
 
 ### 競合解消
 
-```
-競合 = ローカルが dirty=1 かつ Supabase側も updated_at が更新されている場合
+#### updated_at の設定責任
 
-解消方針: Last-Write-Wins
-  - Supabase.updated_at > Local.updated_at → Supabaseで上書き、dirty=0
-  - Local.updated_at >= Supabase.updated_at → ローカルをPush（後述のreorder問題を除く）
-
-競合をユーザーに通知する機構は現フェーズでは不要
 ```
+Supabase側: set_updated_at() トリガーが自動でセット（UTC）
+
+ローカル側: Repository.save() 内で必ずセットする
+  → DateTime.now().toUtc().toIso8601String() をローカルDBに書き込む
+  → モデル層・画面層では設定しない（Repositoryに一元化）
+
+保存フォーマット: 必ず UTC の ISO8601 文字列
+  例: "2024-03-14T09:00:00.000Z"
+  NG: "2024-03-14 18:00:00" （タイムゾーン不明・比較不正確）
+```
+
+> **⚠ タイムゾーン統一が必須**
+> デバイスのローカル時刻をそのまま使うと、Supabase（UTC）との比較が狂う。
+> アプリ内で `DateTime` を扱う際は常に `.toUtc()` してから文字列化する。
+
+> **⚠ デバイス時刻のズレ（clock skew）**
+> デバイス時計が数分ずれているケースがある。完全な解決はNTPに依存するが、
+> 現フェーズでは許容する（数秒〜数分のズレは実害が少ない）。
+> 将来的に問題になる場合は Supabase の `now()` をAPIで取得して補正する。
+
+#### 比較ロジック（Pull時）
+
+```dart
+// ローカルにレコードが存在し、かつ dirty=1 の場合（競合）
+final localUpdatedAt = DateTime.parse(local['updated_at']);
+final remoteUpdatedAt = DateTime.parse(remote['updated_at']);
+
+if (remoteUpdatedAt.isAfter(localUpdatedAt)) {
+  // Supabase が新しい → ローカルを上書き、dirty=0
+  localDb.update(remote, dirty: 0);
+} else {
+  // ローカルが新しい（または同時刻）→ ローカルを維持、dirty=1のままPushへ
+  // ※ 同時刻の場合もローカル優先（保存操作はユーザーの意図）
+}
+```
+
+#### Push時の二重チェック（Pull→Push間の変更を防ぐ）
+
+```
+問題:
+  T1: Pull実行 → Supabase.knowledge[A].updated_at = "10:00"
+  T2: 別デバイスが knowledge[A] を更新 → Supabase.updated_at = "10:05"
+  T3: Push実行 → ローカルの "10:03" でSupabaseを上書き → T2の変更が消える
+
+対応:
+  Pushの UPSERT 時に、Supabase側の updated_at を条件として付ける。
+  Supabase の RPC（ストアドファンクション）または Row-level comparison で実装:
+
+  UPDATE knowledge
+  SET ...
+  WHERE id = $supabase_id
+    AND updated_at <= $local_updated_at  -- ローカルより新しければ上書きしない
+
+  上書きをブロックされた場合 → そのレコードは dirty=1 のまま維持し、
+  次のPullサイクルで改めてSupabase側を取得 → 再度LWWで解消
+```
+
+> この二重チェックをしないと、Pull→Push間の短い時間窓で他デバイスの更新が消える。
+> Supabase の RPC として `upsert_if_newer(table, record, local_updated_at)` を定義する。
 
 ---
 
