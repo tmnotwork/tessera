@@ -21,6 +21,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
   final _questionController = TextEditingController();
   final _choiceControllers = List.generate(4, (_) => TextEditingController());
   final _explanationController = TextEditingController();
+  final _referenceController = TextEditingController();
 
   int _correctIndex = 0;
   List<Map<String, dynamic>> _subjects = [];
@@ -47,6 +48,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
     _questionController.dispose();
     for (final c in _choiceControllers) c.dispose();
     _explanationController.dispose();
+    _referenceController.dispose();
     super.dispose();
   }
 
@@ -81,6 +83,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
 
       final questionText = q['question_text']?.toString() ?? '';
       final explanation = q['explanation']?.toString() ?? '';
+      final reference = q['reference']?.toString() ?? '';
       final correctAnswer = q['correct_answer']?.toString() ?? '';
 
       final List<String> choiceTexts = List.filled(4, '');
@@ -134,6 +137,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
       setState(() {
         _questionController.text = questionText;
         _explanationController.text = explanation;
+        _referenceController.text = reference;
         for (var i = 0; i < 4; i++) _choiceControllers[i].text = choiceTexts[i];
         _correctIndex = correctIdx;
         _loadingQuestion = false;
@@ -220,6 +224,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
       final client = Supabase.instance.client;
       final correctAnswer = choices[_correctIndex];
       final explanation = _explanationController.text.trim().isEmpty ? null : _explanationController.text.trim();
+      final reference = _referenceController.text.trim().isEmpty ? null : _referenceController.text.trim();
 
       if (_isEditMode) {
         final questionId = widget.questionId!;
@@ -227,6 +232,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
           'question_text': questionText,
           'correct_answer': correctAnswer,
           'explanation': explanation,
+          'reference': reference,
         }).eq('id', questionId);
 
         await client.from('question_choices').delete().eq('question_id', questionId);
@@ -260,6 +266,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
           'question_text': questionText,
           'correct_answer': correctAnswer,
           'explanation': explanation,
+          'reference': reference,
         }).select('id').single();
 
         final questionId = inserted['id'] as String;
@@ -355,14 +362,46 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
               );
             }),
             const SizedBox(height: 16),
+            Text(
+              '解説（任意）',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 8),
             TextFormField(
               controller: _explanationController,
               decoration: const InputDecoration(
-                labelText: '解説（任意）',
+                hintText: '正解に至る思考の流れを入力。改行できます。',
                 border: OutlineInputBorder(),
                 alignLabelWithHint: true,
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               ),
-              maxLines: 2,
+              maxLines: null,
+              minLines: 10,
+              textAlignVertical: TextAlignVertical.top,
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            const SizedBox(height: 20),
+            Text(
+              '参考（任意）',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _referenceController,
+              decoration: const InputDecoration(
+                hintText: '学習者に補足として表示します。解説の後に別枠で表示。',
+                border: OutlineInputBorder(),
+                alignLabelWithHint: true,
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+              maxLines: null,
+              minLines: 4,
+              textAlignVertical: TextAlignVertical.top,
+              style: Theme.of(context).textTheme.bodyLarge,
             ),
             const SizedBox(height: 24),
             const Text('関連する知識', style: TextStyle(fontWeight: FontWeight.w500)),

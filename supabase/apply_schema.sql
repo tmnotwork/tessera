@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS public.questions (
   question_text   TEXT        NOT NULL,
   correct_answer  TEXT        NOT NULL,
   explanation     TEXT,
+  reference       TEXT,
   choices         JSONB,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()

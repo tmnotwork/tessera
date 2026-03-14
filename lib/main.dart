@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -161,21 +162,89 @@ class StartupErrorApp extends StatelessWidget {
   }
 }
 
-class RootApp extends StatelessWidget {
+const _themeModeKey = 'theme_mode';
+
+ThemeData _buildLightTheme() {
+  return ThemeData(
+    colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+    useMaterial3: true,
+    fontFamily: 'NotoSansJP',
+  );
+}
+
+ThemeData _buildDarkTheme() {
+  return ThemeData(
+    colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo, brightness: Brightness.dark),
+    useMaterial3: true,
+    fontFamily: 'NotoSansJP',
+  );
+}
+
+class RootApp extends StatefulWidget {
   const RootApp({super.key, required this.localDb});
 
   final Database? localDb;
 
   @override
+  State<RootApp> createState() => _RootAppState();
+}
+
+class _RootAppState extends State<RootApp> {
+  ThemeMode _themeMode = ThemeMode.system;
+
+  @override
+  void initState() {
+    super.initState();
+    appThemeNotifier.listen(_onThemeModeChanged);
+    _loadThemeMode();
+  }
+
+  @override
+  void dispose() {
+    appThemeNotifier.dispose();
+    super.dispose();
+  }
+
+  void _onThemeModeChanged(ThemeMode mode) {
+    if (mounted) setState(() => _themeMode = mode);
+    _persistThemeMode(mode);
+  }
+
+  Future<void> _persistThemeMode(ThemeMode mode) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final value = switch (mode) {
+        ThemeMode.light => 'light',
+        ThemeMode.dark => 'dark',
+        ThemeMode.system => 'system',
+      };
+      await prefs.setString(_themeModeKey, value);
+    } catch (_) {}
+  }
+
+  Future<void> _loadThemeMode() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getString(_themeModeKey);
+      if (stored == null) return;
+      final mode = switch (stored) {
+        'light' => ThemeMode.light,
+        'dark' => ThemeMode.dark,
+        _ => ThemeMode.system,
+      };
+      appThemeNotifier.initThemeMode(mode);
+      if (mounted) setState(() => _themeMode = mode);
+    } catch (_) {}
+  }
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Tessera',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
-        fontFamily: 'NotoSansJP',
-      ),
-      home: RootScaffold(key: _rootScaffoldKey, localDb: localDb),
+      theme: _buildLightTheme(),
+      darkTheme: _buildDarkTheme(),
+      themeMode: _themeMode,
+      home: RootScaffold(key: _rootScaffoldKey, localDb: widget.localDb),
     );
   }
 }

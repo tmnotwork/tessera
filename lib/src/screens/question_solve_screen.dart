@@ -61,7 +61,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
       final id = widget.questionIds[_index];
       final row = await client
           .from('questions')
-          .select('id, knowledge_id, question_type, question_text, correct_answer, explanation, choices, created_at, updated_at')
+          .select('id, knowledge_id, question_type, question_text, correct_answer, explanation, reference, choices, created_at, updated_at')
           .eq('id', id)
           .maybeSingle();
       if (row == null) {
@@ -174,6 +174,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
 
     final questionText = _question!['question_text']?.toString() ?? '';
     final explanation = _question!['explanation']?.toString() ?? '';
+    final reference = _question!['reference']?.toString() ?? '';
     final choices = _currentChoices;
     final isMultipleChoice = choices.length >= 2;
 
@@ -273,59 +274,110 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                     ),
               ),
               const SizedBox(height: 8),
-              ...choices.asMap().entries.map((e) {
-                final i = e.key;
-                final text = e.value;
-                final selected = _selectedIndex == i;
-                final correct = _question!['correct_answer']?.toString() == text;
-                Color? bg;
-                if (_answered) {
-                  if (correct) bg = Colors.green.shade100;
-                  else if (selected && !correct) bg = Colors.red.shade100;
-                }
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Material(
-                    color: bg ?? Theme.of(context).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(12),
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  const breakpointWide = 600.0;
+                  const minChoiceWidth = 180.0;
+                  const spacing = 8.0;
+                  final width = constraints.maxWidth;
+                  final isWide = width >= breakpointWide;
+                  final useTwoRows = isWide && (width - 3 * spacing) / 4 < minChoiceWidth;
+
+                  Widget choiceCard(int i, String text) {
+                    final selected = _selectedIndex == i;
+                    final correct = _question!['correct_answer']?.toString() == text;
+                    Color? bg;
+                    if (_answered) {
+                      if (correct) bg = Colors.green.shade100;
+                      else if (selected && !correct) bg = Colors.red.shade100;
+                    }
+                    return Material(
+                      color: bg ?? Theme.of(context).colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(
-                        color: Theme.of(context).colorScheme.outlineVariant,
-                        width: 1,
-                      ),
-                    ),
-                    child: InkWell(
-                      onTap: () => _onSelectChoice(i),
-                      borderRadius: BorderRadius.circular(12),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                        child: Row(
-                          children: [
-                            Text(
-                              '${String.fromCharCode(65 + i)}.',
-                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: Theme.of(context).colorScheme.primary,
-                                  ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: SelectableText(
-                                text,
-                                style: Theme.of(context).textTheme.bodyLarge,
-                              ),
-                            ),
-                            if (_answered && correct) Icon(Icons.check_circle, color: Colors.green.shade700, size: 22),
-                            if (_answered && selected && !correct) Icon(Icons.cancel, color: Colors.red.shade700, size: 22),
-                          ],
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                          width: 1,
                         ),
                       ),
-                    ),
-                  ),
-                );
-              }),
+                      child: InkWell(
+                        onTap: () => _onSelectChoice(i),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '${String.fromCharCode(65 + i)}.',
+                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(context).colorScheme.primary,
+                                    ),
+                              ),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: SelectableText(
+                                  text,
+                                  style: Theme.of(context).textTheme.bodyLarge,
+                                  maxLines: 2,
+                                ),
+                              ),
+                              if (_answered && correct) Icon(Icons.check_circle, color: Colors.green.shade700, size: 22),
+                              if (_answered && selected && !correct) Icon(Icons.cancel, color: Colors.red.shade700, size: 22),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
+                  if (!isWide) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: List.generate(4, (i) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: choiceCard(i, choices[i]),
+                      )),
+                    );
+                  }
+                  if (useTwoRows) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(child: choiceCard(0, choices[0])),
+                            const SizedBox(width: spacing),
+                            Expanded(child: choiceCard(1, choices[1])),
+                          ],
+                        ),
+                        const SizedBox(height: spacing),
+                        Row(
+                          children: [
+                            Expanded(child: choiceCard(2, choices[2])),
+                            const SizedBox(width: spacing),
+                            Expanded(child: choiceCard(3, choices[3])),
+                          ],
+                        ),
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(child: choiceCard(0, choices[0])),
+                      const SizedBox(width: spacing),
+                      Expanded(child: choiceCard(1, choices[1])),
+                      const SizedBox(width: spacing),
+                      Expanded(child: choiceCard(2, choices[2])),
+                      const SizedBox(width: spacing),
+                      Expanded(child: choiceCard(3, choices[3])),
+                    ],
+                  );
+                },
+              ),
             ] else
               Padding(
                 padding: const EdgeInsets.all(8),
@@ -349,6 +401,29 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                   ],
                 ),
               ),
+              if (reference.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.8),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant.withOpacity(0.5),
+                      width: 1,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('参考', style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                      const SizedBox(height: 4),
+                      SelectableText(reference, style: Theme.of(context).textTheme.bodyMedium),
+                    ],
+                  ),
+                ),
+              ],
             ],
             const SizedBox(height: 24),
             Row(

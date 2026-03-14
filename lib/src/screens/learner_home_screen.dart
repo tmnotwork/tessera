@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'knowledge_list_screen.dart';
 import 'memorization_list_screen.dart';
 import 'question_solve_screen.dart';
+import 'settings_screen.dart';
 
 /// 学習者向けホーム画面
 /// 知識を学ぶ / 四択問題を解く / 暗記カード の入口
@@ -87,6 +88,17 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
       appBar: AppBar(
         title: const Text('学習'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => const SettingsScreen(),
+                ),
+              );
+            },
+            tooltip: '設定',
+          ),
           if (widget.onOpenManage != null)
             TextButton.icon(
               onPressed: widget.onOpenManage,
