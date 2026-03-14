@@ -1,0 +1,9 @@
+[
+  {
+    "id": "english_grammar",
+    "name": "英文法",
+    "group": "文法",
+    "knowledge_file": "knowledge.json",
+    "questions_file": "questions.json"
+  }
+]
