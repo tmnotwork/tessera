@@ -214,22 +214,90 @@ class KnowledgeRepositoryImpl implements KnowledgeRepository {
 
 ---
 
-## connectivity監視
+## connectivity監視とオンライン復帰時の同期フロー
 
 `connectivity_plus` パッケージを追加（現在 pubspec.yaml に未記載）。
 
+### sync() メソッドの定義
+
+```
+SyncEngine.sync() の処理順序:
+1. is_syncing=true を設定（多重起動防止）
+2. Pull（Supabase → Local）を実行
+3. Pull 完了後、Push（Local → Supabase）を実行
+   ※ Pull中に新たに dirty=1 になったレコードも Push 対象に含める
+4. 完了後 is_syncing=false
+5. SyncNotifier に完了を通知 → 各画面がリフレッシュ
+
+Pull を先に行う理由:
+- 他デバイスの変更を取り込んでから Push することで、
+  競合判定（LWW）を正確に行える
+- Push を先にすると、古いデータで Supabase を上書きするリスクがある
+```
+
+### syncを呼び出すタイミング
+
+```
+① アプリ起動時（オンライン確認後）
+   → main() の Supabase 初期化直後に sync() を呼ぶ
+   → ネット未接続なら skip（ローカルDBのみで起動）
+
+② オフライン → オンライン復帰時（connectivity変化検知）
+   → デバウンス 3秒 を挟んでから sync() を実行
+   （WiFi不安定時の多重起動を防ぐ）
+
+③ 手動リフレッシュ（将来的なUIボタン）
+```
+
 ```dart
-// オフライン → オンライン復帰時
+// 実装イメージ
+Timer? _debounceTimer;
+
 connectivitySubscription = Connectivity().onConnectivityChanged.listen((result) {
   if (result != ConnectivityResult.none) {
-    SyncEngine.instance.sync(); // 差分同期を実行
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(seconds: 3), () {
+      if (!SyncEngine.instance.isSyncing) {
+        SyncEngine.instance.sync();
+      }
+    });
   }
 });
+
+// 起動時
+await SyncEngine.instance.syncIfOnline();
+```
+
+### sync完了後のUI更新
+
+**問題**: バックグラウンドで sync が完了しても、開いている画面が古いデータを表示したまま。
+
+```
+対応: SyncNotifier（ValueNotifier<SyncState>）を導入
+
+SyncState:
+  - idle       : 同期なし
+  - syncing    : 同期中
+  - done       : 同期完了（完了時刻付き）
+  - error      : 同期失敗
+
+各画面は SyncNotifier をリッスンし、done になったらデータを再取得する:
+
+void initState() {
+  syncNotifier.addListener(_onSyncStateChanged);
+}
+
+void _onSyncStateChanged() {
+  if (syncNotifier.value == SyncState.done) {
+    _load(); // ローカルDBから再取得
+  }
+}
 ```
 
 > **⚠ connectivity_plus の偽陽性に注意**
 > WiFi接続あり ≠ Supabaseに到達可能。SupabaseのAPIコールが失敗した場合も
 > 「オフライン扱い」として dirty=1 を維持し、次の復帰検知で再試行する。
+> → sync() 内部の try-catch で Supabase エラーをキャッチし、is_syncing=false のまま終了。
 
 ---
 
