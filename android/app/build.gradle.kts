@@ -42,3 +42,20 @@ android {
 flutter {
     source = "../.."
 }
+
+// ビルド出力が LOCALAPPDATA のため、Flutter が APK を認識できるようプロジェクトの build にコピー
+afterEvaluate {
+    tasks.named("assembleRelease").configure {
+        doLast {
+            val apkSource = layout.buildDirectory.file("outputs/flutter-apk/app-release.apk").get().asFile
+            if (apkSource.exists()) {
+                val destDir = rootProject.file("../../build/app/outputs/flutter-apk")
+                if (!destDir.exists()) destDir.mkdirs()
+                project.copy {
+                    from(apkSource)
+                    into(destDir)
+                }
+            }
+        }
+    }
+}

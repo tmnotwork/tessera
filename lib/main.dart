@@ -2,15 +2,20 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'src/app_scope.dart';
 import 'src/asset_import.dart';
 import 'src/init_sqflite_stub.dart' if (dart.library.io) 'src/init_sqflite_io.dart' as init_sqflite;
+import 'src/screens/four_choice_list_screen.dart';
 import 'src/screens/knowledge_list_screen.dart';
+import 'src/screens/learner_home_screen.dart';
+import 'src/screens/memorization_list_screen.dart';
 
 // 実機ビルドでは .env が同梱されないため、フォールバック用の公開キー
 const _fallbackSupabaseUrl = 'https://wnufzrehvhcwclnwxwim.supabase.co';
@@ -37,7 +42,12 @@ Future<void> main() async {
       await dotenv.load(fileName: '.env');
       final fromEnvUrl = (dotenv.env['SUPABASE_URL'] ?? '').trim();
       final fromEnvKey = (dotenv.env['SUPABASE_ANON_KEY'] ?? '').trim();
-      if (fromEnvUrl.isNotEmpty && fromEnvKey.isNotEmpty) {
+      // 実機では localhost / 127.0.0.1 / 非 HTTPS は使わない（SocketException 防止）
+      final urlOk = fromEnvUrl.isNotEmpty &&
+          fromEnvUrl.startsWith('https://') &&
+          !fromEnvUrl.contains('localhost') &&
+          !fromEnvUrl.contains('127.0.0.1');
+      if (urlOk && fromEnvKey.isNotEmpty) {
         supabaseUrl = fromEnvUrl;
         supabaseAnonKey = fromEnvKey;
       }
@@ -70,6 +80,7 @@ class StartupErrorApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
+        fontFamily: 'NotoSansJP',
       ),
       home: Scaffold(
         body: SafeArea(
@@ -92,6 +103,55 @@ class StartupErrorApp extends StatelessWidget {
                   const SizedBox(height: 16),
                   Text('$stack', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
                 ],
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  icon: const Icon(Icons.copy),
+                  label: const Text('エラー全文をコピー'),
+                  onPressed: () {
+                    final full = '$error\n\n${stack ?? ''}';
+                    Clipboard.setData(ClipboardData(text: full));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('クリップボードにコピーしました')),
+                    );
+                    showDialog<void>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('エラー全文（長押しで選択・コピー可能）'),
+                        content: SizedBox(
+                          width: double.maxFinite,
+                          height: 320,
+                          child: TextField(
+                            readOnly: true,
+                            maxLines: null,
+                            controller: TextEditingController(text: full),
+                            style: const TextStyle(fontSize: 12),
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                              contentPadding: EdgeInsets.all(12),
+                            ),
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            child: const Text('閉じる'),
+                          ),
+                          FilledButton.icon(
+                            icon: const Icon(Icons.copy),
+                            label: const Text('もう一度コピー'),
+                            onPressed: () {
+                              Clipboard.setData(ClipboardData(text: full));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('クリップボードにコピーしました')),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
               ],
             ),
           ),
@@ -113,11 +173,14 @@ class RootApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
+        fontFamily: 'NotoSansJP',
       ),
-      home: RootScaffold(localDb: localDb),
+      home: RootScaffold(key: _rootScaffoldKey, localDb: localDb),
     );
   }
 }
+
+final _rootScaffoldKey = GlobalKey<_RootScaffoldState>();
 
 class RootScaffold extends StatefulWidget {
   const RootScaffold({super.key, required this.localDb});
@@ -131,12 +194,25 @@ class RootScaffold extends StatefulWidget {
 class _RootScaffoldState extends State<RootScaffold> {
   int _index = 0;
 
+  void _switchToManageTab(BuildContext context) {
+    final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
+    navigator.popUntil((route) => route.isFirst);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _index = 2);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final pages = [
-      LearningSyncPage(localDb: widget.localDb),
+      LearnerHomeScreen(
+        onOpenManage: () => setState(() => _index = 2),
+      ),
+      KnowledgeDbHomePage(localDb: widget.localDb),
       TeacherAdminPage(localDb: widget.localDb),
     ];
+
+    openManageNotifier.openManage = (ctx) => _rootScaffoldKey.currentState?._switchToManageTab(ctx);
 
     return Scaffold(
       body: pages[_index],
@@ -147,7 +223,12 @@ class _RootScaffoldState extends State<RootScaffold> {
           NavigationDestination(
             icon: Icon(Icons.school_outlined),
             selectedIcon: Icon(Icons.school),
-            label: '学習テスト',
+            label: '学習',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.menu_book_outlined),
+            selectedIcon: Icon(Icons.menu_book),
+            label: '知識DB',
           ),
           NavigationDestination(
             icon: Icon(Icons.manage_search_outlined),
@@ -156,6 +237,113 @@ class _RootScaffoldState extends State<RootScaffold> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 起動時初期画面：知識DB の科目一覧（タップでその科目の知識カード一覧へ）
+class KnowledgeDbHomePage extends StatefulWidget {
+  const KnowledgeDbHomePage({super.key, this.localDb});
+
+  final Database? localDb;
+
+  @override
+  State<KnowledgeDbHomePage> createState() => _KnowledgeDbHomePageState();
+}
+
+class _KnowledgeDbHomePageState extends State<KnowledgeDbHomePage> {
+  List<Map<String, dynamic>> _subjects = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchSubjects();
+  }
+
+  Future<void> _fetchSubjects() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final client = Supabase.instance.client;
+      final rows = await client.from('subjects').select().order('display_order');
+      if (mounted) {
+        setState(() {
+          _subjects = List<Map<String, dynamic>>.from(rows);
+          _error = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = e.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('知識DB'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loading ? null : _fetchSubjects,
+            tooltip: '再読み込み',
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(_error!, style: Theme.of(context).textTheme.bodyMedium),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: _fetchSubjects,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('再試行'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : _subjects.isEmpty
+                  ? const Center(child: Text('科目がありません'))
+                  : ListView.separated(
+                      itemCount: _subjects.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final s = _subjects[index];
+                        final subjectId = s['id'] as String?;
+                        final subjectName = s['name']?.toString() ?? '知識カード';
+                        if (subjectId == null) return const SizedBox.shrink();
+                        return ListTile(
+                          title: Text(subjectName),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (context) => KnowledgeListScreen(
+                                  subjectId: subjectId,
+                                  subjectName: subjectName,
+                                ),
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
     );
   }
 }
@@ -419,17 +607,48 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
 
   Future<void> _fetchSubjects() async {
     setState(() => _loading = true);
+    setState(() => _error = null);
     try {
       final client = Supabase.instance.client;
       final rows = await client.from('subjects').select().order('display_order');
-      setState(() {
-        _subjects = List<Map<String, dynamic>>.from(rows);
-        _error = null;
-      });
-    } catch (e) {
-      setState(() => _error = e.toString());
+      if (mounted) {
+        setState(() {
+          _subjects = List<Map<String, dynamic>>.from(rows);
+          _error = null;
+        });
+      }
+    } catch (e, stack) {
+      if (mounted) {
+        setState(() => _error = '${e.runtimeType}: ${e.toString()}\n\n$stack');
+      }
     } finally {
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Supabase 接続と DB の有無を確認する（詳細表示用）
+  Future<void> _testConnection() async {
+    setState(() => _loading = true);
+    setState(() => _error = null);
+    try {
+      final client = Supabase.instance.client;
+      await client.from('subjects').select('id').limit(1).maybeSingle();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('接続成功: Supabase に接続できました。')),
+        );
+        await _fetchSubjects();
+      }
+    } catch (e, stack) {
+      if (mounted) {
+        setState(() => _error =
+            '接続テスト結果:\n'
+            '${e.runtimeType}: ${e.toString()}\n\n'
+            'StackTrace:\n$stack\n\n'
+            '--- 上記をコピーして共有してください ---');
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -528,13 +747,79 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
     }
   }
 
-  void _openKnowledgeList(Map<String, dynamic> subject) {
+  void _copyErrorAndShowDialog(BuildContext context, String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('クリップボードにコピーしました')),
+    );
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('エラー全文（長押しで選択・コピー可能）'),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 320,
+          child: TextField(
+            readOnly: true,
+            maxLines: null,
+            controller: TextEditingController(text: text),
+            style: const TextStyle(fontSize: 12),
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              isDense: true,
+              contentPadding: EdgeInsets.all(12),
+              alignLabelWithHint: true,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('閉じる'),
+          ),
+          FilledButton.icon(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: text));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('クリップボードにコピーしました')),
+              );
+            },
+            icon: const Icon(Icons.copy, size: 18),
+            label: const Text('もう一度コピー'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openKnowledgeDb() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => KnowledgeListScreen(
-          subjectId: subject['id'] as String,
-          subjectName: subject['name']?.toString() ?? '知識カード',
+        builder: (context) => _SubjectPickerPage(
+          subjects: _subjects,
+          title: '知識DB',
+          isKnowledge: true,
         ),
+      ),
+    );
+  }
+
+  void _openMemorizationDb() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => _SubjectPickerPage(
+          subjects: _subjects,
+          title: '暗記DB',
+          isKnowledge: false,
+        ),
+      ),
+    );
+  }
+
+  void _openFourChoice() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const FourChoiceListScreen(),
       ),
     );
   }
@@ -543,8 +828,13 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('教師用管理'),
+        title: const Text('教材管理'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.wifi_find),
+            tooltip: 'Supabase 接続テスト',
+            onPressed: _loading ? null : _testConnection,
+          ),
           IconButton(
             icon: const Icon(Icons.upload_file),
             tooltip: '参考書データをインポート',
@@ -563,7 +853,29 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
           if (_error != null)
             Padding(
               padding: const EdgeInsets.all(12),
-              child: Text(_error!, style: const TextStyle(color: Colors.red)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('エラーが発生しました。下の「コピー」で全文をコピーできます。'),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      FilledButton.icon(
+                        onPressed: () => _copyErrorAndShowDialog(context, _error!),
+                        icon: const Icon(Icons.copy, size: 20),
+                        label: const Text('エラー全文をコピー'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.icon(
+                        onPressed: _loading ? null : _fetchSubjects,
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: const Text('再読み込み'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           Expanded(
             child: _subjects.isEmpty && !_loading
@@ -581,21 +893,94 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
                       ],
                     ),
                   )
-                : ListView.separated(
-                    itemCount: _subjects.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final s = _subjects[index];
-                      return ListTile(
-                        title: Text(s['name']?.toString() ?? ''),
+                : ListView(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.menu_book),
+                        title: const Text('知識DB'),
+                        subtitle: const Text('解説メインの知識カードを管理'),
                         trailing: const Icon(Icons.chevron_right),
-                        onTap: () => _openKnowledgeList(s),
-                      );
-                    },
+                        onTap: _openKnowledgeDb,
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.style),
+                        title: const Text('暗記DB'),
+                        subtitle: const Text('表・裏の暗記カードを管理'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: _openMemorizationDb,
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.quiz_outlined),
+                        title: const Text('四択問題'),
+                        subtitle: const Text('四択問題の作成・一覧'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: _openFourChoice,
+                      ),
+                    ],
                   ),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 知識DB / 暗記DB 用の科目選択ページ
+class _SubjectPickerPage extends StatelessWidget {
+  const _SubjectPickerPage({
+    required this.subjects,
+    required this.title,
+    required this.isKnowledge,
+  });
+
+  final List<Map<String, dynamic>> subjects;
+  final String title;
+  final bool isKnowledge;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: subjects.isEmpty
+          ? const Center(child: Text('科目がありません'))
+          : ListView.separated(
+              itemCount: subjects.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final s = subjects[index];
+                final subjectId = s['id'] as String?;
+                final subjectName = s['name']?.toString() ?? (isKnowledge ? '知識カード' : '暗記カード');
+                if (subjectId == null) return const SizedBox.shrink();
+                return ListTile(
+                  title: Text(subjectName),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    if (isKnowledge) {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => KnowledgeListScreen(
+                            subjectId: subjectId,
+                            subjectName: subjectName,
+                          ),
+                        ),
+                      );
+                    } else {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => MemorizationListScreen(
+                            subjectId: subjectId,
+                            subjectName: subjectName,
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                );
+              },
+            ),
     );
   }
 }

@@ -5,15 +5,19 @@ allprojects {
     }
 }
 
-val newBuildDir: Directory =
-    rootProject.layout.buildDirectory
-        .dir("../../build")
-        .get()
-rootProject.layout.buildDirectory.value(newBuildDir)
-
+// OneDrive 内だと build がジャンクションの場合に Gradle のスナップショットで "not a regular file" になるため、
+// ビルド出力を OneDrive 外（LOCALAPPDATA）に出す。APK は assembleRelease 後にプロジェクトの build へコピーする。
+val buildRootDir: java.io.File = java.io.File(
+    System.getenv("LOCALAPPDATA") ?: System.getenv("TEMP") ?: "C:\\Temp",
+    "tessera_android_build"
+)
+rootProject.layout.buildDirectory.set(
+    rootProject.layout.dir(project.provider { buildRootDir })
+)
 subprojects {
-    val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
-    project.layout.buildDirectory.value(newSubprojectBuildDir)
+    project.layout.buildDirectory.set(
+        rootProject.layout.dir(project.provider { java.io.File(buildRootDir, project.name) })
+    )
 }
 subprojects {
     project.evaluationDependsOn(":app")

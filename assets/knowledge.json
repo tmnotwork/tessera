@@ -1,0 +1,609 @@
+[
+  {
+    "id": "k001",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 1,
+    "title": "仮定法とは",
+    "tags": [
+      "基本"
+    ],
+    "explanation": "仮定法は、現実ではない妄想を語る表現です。\n\n「実際はそうじゃないけど、もしそうだったら…」という空想や願望を表すときに使います。\n\n> If I were a bird, I could fly to you.\n> （もし私が鳥だったら、あなたのところへ飛んでいけるのに）\n\n> If I had more time, I would study abroad.\n> （もっと時間があれば、留学するのになあ）"
+  },
+  {
+    "id": "k002",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 2,
+    "title": "直説法と仮定法の比較",
+    "tags": [
+      "基本"
+    ],
+    "explanation": "日本語では「時間があれば」と言うとき、現実にありえる話か、ありえない妄想か、形の上では区別しない。\n一方、英語では文法的に区別し、\n・現実あり得る話を「直接法」、\n・現実にありえない話を「仮定法」\nと言う。\n\n例えば、日本語で「彼は時間があれば、私の宿題を手伝ってくれます」と言う場合を考えてみよう。\n日本語では、直接法/仮定法を区別しないので、現実にありえる話か、ありえない話かは、文脈でしか判断できない。\n\nしかし英語の場合は形が異なる。\n\n> **直説法（現実にありえる話）**\n> If he **has** time, he **helps** me with my homework.\n\nこの場合、彼が時間を持っていて、手伝ってくれる可能性がある。純粋に仮定の話をしている。\n\n> **仮定法（現実にない妄想）**\n> If he **had** time, he **would** help me with my homework.\n\nこの場合、彼は時間がないことを含意する。あくまで「時間があったらいいのに」という願望を述べているのだ。\n\n\n"
+  },
+  {
+    "id": "k003",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 3,
+    "title": "仮定法の特徴：時制のずれ",
+    "tags": [
+      "基本"
+    ],
+    "explanation": "仮定法の文法的な特徴は、**時制が1段階ずれる**ことです。\n今の話をしてい射る場合でも、仮定法では過去形を使います。\n特に**助動詞の過去形**（would, could, might）が現れるのが大きなサインです。\n\nもう一度、直接法を比べてみましょう。どちらも日本語では「今、彼に時間があれば」という意味ですが、形が違います。\n\n> 直説法\n> If he has time, he will help me.\n> （彼に時間があれば、手伝ってくれる）\n\n> 仮定法\n> If he had time, he would help me.\n> （彼に時間があれば、手伝ってくれるのに）\n\n直説法の will / can / may が、仮定法では would / could / might にずれる。\nこのずれで、聞き手は「ああ、仮定法だ」と判断します。\n\n仮定法は「現実と乖離した話」を示しますが、この現実との乖離の「距離感」を、過去形を使うことで表すと言われています。"
+  },
+  {
+    "id": "k004",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 4,
+    "title": "仮定法過去（現在の妄想）",
+    "construction": true,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "仮定法過去とは、「今」の妄想を表す**仮定法の基本形**です。\n\n> 仮定法過去の基本構造\n> **If ＋ 主語 ＋ 過去形 …, 主語 ＋ would ＋ 原形 …**\n> if 節には過去形、主節には would ＋ 動詞の原形を用いる。※could / might / should も主節で使う。\n\n> If I had more time, I would read more books.\n> （もっと時間があれば、もっと本を読むのになあ）\n\n> If she were here, she would help us.\n> （彼女がここにいれば、手伝ってくれるのに）\n\n「had」「were」は過去形だが、意味は「今」の話である。現実には時間がない、彼女はここにいない、という妄想を語っている。この「過去形で今を表す」点が、仮定法過去の文法上の特徴である。"
+  },
+  {
+    "id": "k007",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 5,
+    "title": "仮定法過去（未来の妄想）",
+    "tags": [
+      "基本"
+    ],
+    "explanation": "仮定法過去は「今」の妄想だけでなく、**未来の事象**も表せます。形は同じ（If ＋ 過去形 …, would ＋ 原形）です。\n\n> If it rained tomorrow, we would cancel the picnic.\n> （万が一明日雨が降ったら、ピクニックは中止にするだろう）\n\nこの文は「明日雨が降る」という未来の話です。\n\n**現在か未来かは、文脈で判断する。**\n\n文の形だけでは区別できません。時間を表す語（tomorrow, next week など）や、前後の話の流れから、「今」の妄想なのか「未来」の妄想なのかを読み取ります。仮定法過去は「現実とずれた妄想」を表す形であり、その妄想が今の話なのか未来の話なのかは、文脈に委ねられます。"
+  },
+  {
+    "id": "k005",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 6,
+    "title": "仮定法のbe動詞",
+    "tags": [
+      "基本"
+    ],
+    "explanation": "仮定法過去の if 節で be動詞を使うときは、**were** を用いる。\n\n直説法では、I / he / she / it のあとは was、you / we / they のあとは were と使い分ける。しかし**仮定法では、主語が何であっても were** が使われる。\n\n> If I were rich, I would travel the world.\n> （お金持ちだったら、世界を旅するのに）\n\n> If he were here, he would know what to do.\n> （彼がもしここにいれば、どうすべきか分かってくれるのに）\n",
+    "construction": true
+  },
+  {
+    "id": "k006",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 7,
+    "title": "仮定法過去完了（過去の妄想）",
+    "construction": true,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "仮定法過去完了とは、「過去」の妄想を表す仮定法です。\n\n仮定法では、**今の話でも過去形**を使います（仮定法過去）。\nそこで「過去」の話を妄想で語る場合は、さらに1段階、時制をずらす必要があります。\nそのために「had + 完了形」の形にします。\n\n> 仮定法過去完了\n> **If ＋ 主語 ＋ had ＋ 過去分詞 , 主語 ＋ would have ＋ 過去分詞 **\n> もしあのとき～だったら、～だったのに\n\n過去完了形の意味の一つに「大過去（過去よりさらに過去）」がありますが、それと同じ形です。\n\n仮定法過去は、「あの時こうだったら…」と後悔や言い訳を述べる形です。\n\n> If I had known, I would have told you.\n> （知っていたら、あなたに伝えていたのに）\n\n> If she had studied harder, she would have passed the exam.\n> （もっと勉強していれば、試験に合格していたのに）\n"
+  },
+  {
+    "id": "k008",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 9,
+    "title": "仮定法未来",
+    "tags": [
+      "基本"
+    ],
+    "explanation": "通常の「仮定法過去」では、if節の動詞は過去形になります。\n\n> 【復習】仮定法過去の公式\n> **If ＋ 主語 ＋ 過去形 …, 主語 ＋ would ＋ 原形 …**\n\n**「仮定法過去」と言いながら、現在だけではなく未来のことも言える形**でした。\n\nこの派生で、未来のことをいう時限定で、if節に **were to** や **should** が使われる場合があります。\nこれを便宜上「**仮定法未来**」と呼びます。\n\n> If I **were to** win the lottery, I would quit my job.\n> （もし宝くじに当たったら、仕事を辞めるのに）\n\n> If it **should** rain tomorrow, we would cancel the picnic.\n> （万が一明日雨が降ったら、ピクニックは中止にします）\n\nこの形では、**通常の仮定法過去よりも、さらに可能性が低い仮定**をします。",
+    "construction": true
+  },
+  {
+    "id": "k009",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 10,
+    "title": "仮定法未来(1)were to",
+    "construction": true,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "仮定法未来のうち、if 節に **were to ＋ 原形** を使う形です。\n\n> **仮定法未来① were to の構文**\n> **If ＋ 主語 ＋ were to ＋ 動詞の原形 …, 主語 ＋ would ＋ 原形 …**\n\n主節は仮定法過去と同じく **would ＋ 原形** です。\n\n> If I were to win the lottery, I would quit my job.\n> （もし宝くじに当たったら、仕事を辞めるのに）\n\n> If the sun were to rise in the west, I would not change my mind.\n> （たとえ太陽が西から昇るようなことがあっても、私の決心は変わりません）\n\nwere to は**非現実的・思考実験的な仮定**を表し、可能性がきわめて低い未来に使います。"
+  },
+  {
+    "id": "k029",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 11,
+    "title": "仮定法未来(2)should",
+    "construction": true,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "仮定法未来のうち、if 節に **should ＋ 原形** を使う形で、**万が一・可能性は低いが起こりうる**未来の仮定に使います。\n\n**主節に仮定法過去だけではなく、直接法・命令文も取れる**のが特徴です。\n---\n\n> **(a)仮定法過去（主節が would ＋ 原形）**\n> **If ＋ 主語 ＋ should ＋ 原形 …, 主語 ＋ would ＋ 原形 …**\n\n> If it should rain tomorrow, we would cancel the picnic.\n> （万が一明日雨が降ったら、ピクニックは中止にするだろう）\n\n---\n\n> **(b)直説法（主節が現在形など）**\n> **If ＋ 主語 ＋ should ＋ 原形 …, 主語 ＋ 動詞（直説法）…**\n\n> If you should need any help, I am always here.\n> （万が一お手伝いが必要でしたら、いつでもここにいます）\n\n---\n\n>**(c)命令文（主節が命令形）**\n>**If ＋ 主語 ＋ should ＋ 原形 …, 命令文**\n\n> If he should call, please tell him I'm out.\n> （万が一彼から電話があったら、外出中だと伝えてください）\n\n---\n"
+  },
+  {
+    "id": "k011",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 12,
+    "title": "未来の仮定法：were to と should の違い",
+    "explanation": "未来の仮定法（未来専用・ありえない度合いが高い形）で使う **were to** と **should** の違いは、以下の通りです。\n\nまずshouldは可能性は低いが、**万が一**起こったら...という仮定に使います。\n\n> If it should rain tomorrow, we would cancel the picnic.\n> （万が一明日雨が降ったら、ピクニックは中止にします）\n\nこの場合、雨が降る可能性は低いが、万が一雨が降ったら...という話をしています。\n\n\n\n一方、were toは、さらに非現実的な仮定の話をします。\n\n> If the sun were to rise in the west, I would not change my mind. \n> （たとえ太陽が西から昇るようなことがあっても、私の決心は変わりません。）\n\n当然「太陽が西から登る」ことはありません。でも、それを「起こるとしたら」と仮定するのがwere toです。\nつまり**「思考実験」**的なニュアンスがあるのがこの形です。\n",
+    "construction": false,
+    "tags": ["基本"]
+  },
+  {
+    "id": "k012",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 13,
+    "title": "未来の仮定法：should の仮定法・主節の形",
+    "explanation": "**仮定法未来**で使う should を使った仮定法では、主節に**S would**、**直説法**、**命令文**などが来ます。\n\n①主節が仮定法過去\nまず仮定法の典型的な形です。\nこの場合、主節も仮定法を使っているので、「絶対にこうなる」とは言い切れません。\n\n> If it should rain tomorrow, we would cancel the picnic.\n> （万が一明日雨が降ったら、ピクニックは中止になるだろうな）\n\n②主節が直説法\n先ほどの①とちがって、万が一が起こった場合に、「こうなる確度が高い」という意味合いになります。\n\n> If you should need any help, I am always here.\n> （万が一お手伝いが必要でしたら、いつでもここにいます）\n\n③主節が命令文\n万が一の事態に備えて、相手に指示や依頼をします。\n\n> If he should call, please tell him I'm out.\n> （万が一彼から電話があったら、外出中だと伝えてください）\n\n\nshouldを使った場合、主節に仮定法過去だけではなく、直接法や命令形が来る可能性があるのは、shouldでは「万が一」ではあるものの、起こりうる話をしているからです。\nなので仮定法の「妄想」の意味合いが薄れて、より現実的な話をすることも可能、ということなのです。\n",
+    "construction": true,
+    "tags": ["基本"]
+  },
+  {
+    "id": "k013",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 14,
+    "title": "仮定法：if の省略（倒置）",
+    "construction": true,
+    "explanation": "仮定法の if 節では、**if を省略すると主語と動詞（助動詞）の語順が倒置**します。フォーマルな書き言葉でよく使われます。\n\n倒置した if 節は、主節の**前**に置く場合（前置）と、**後**に置く場合（後置）の両方があります。\n\n**前置の例（if 節が先）**\n\n> Had I known, I would have told you.\n> （知っていたら、あなたに伝えていたのに）\n\n> Were I rich, I would travel the world.\n> （お金持ちだったら、世界を旅するのに）\n\n**後置の例（if 節が後）**\n\n> I would have told you had I known.\n> （知っていたら、あなたに伝えていたのに）\n\n> I would travel the world were I rich.\n> （お金持ちだったら、世界を旅するのに）\n\n",
+    "tags": ["基本"]
+  },
+  {
+    "id": "k014",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 17,
+    "title": "If節のない仮定法：with / without / but for",
+    "construction": true,
+    "explanation": "**with**・**without**・**but for** で、if 節に代わる条件を表せます。主節は would / could や would have ＋ 過去分詞で受けます。\n\n**with** … 「～があれば」（肯定的条件）\n\n> With more time, I could finish it.\n> （もっと時間があれば、やり遂げられるのに）\n\n> If I had more time, I could finish it. と同じ意味です。\n\n**without** … 「～がなければ」（否定的条件）\n\n> Without your help, I would have failed.\n> （あなたの助けがなければ、失敗していたでしょう）\n\n**but for** … 「～がなければ」（否定的条件・やや硬い表現）\n\n> But for your advice, I would have failed.\n> （あなたのアドバイスがなかったら、失敗していたでしょう）\n\n> If it had not been for your advice と同じ意味です。現在・過去どちらの仮定にも使えます。\n\n**覚え方**：with＝あれば、without／but for＝なければ。どれも if の代わりなので主節は仮定法。\n"
+  },
+  {
+    "id": "k015",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 18,
+    "title": "If節のない仮定法：ifの代用になるto不定詞（副詞用法）",
+    "construction": true,
+    "explanation": "**to不定詞の副詞用法**で、if 節に代わる条件を表すことがあります。\n文頭に置き、「～すれば」という仮定の意味になります。\n\n> To hear him speak, you would think he's a native speaker.\n> （彼の話を聞けば、ネイティブだと思うでしょう）\n\n> To look at her, you'd never guess she's over fifty.\n> （彼女を見れば、50歳を超えているとは思わないでしょう）\n\n仮定王以外のto不定詞だと珍しい用法なので、",
+    "tags": ["基本"],
+    "author_comment": null
+  },
+  {
+    "id": "k016",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 19,
+    "title": "If節のない仮定法：ifの代用になるto不定詞（名詞用法）",
+    "construction": true,
+    "explanation": "to不定詞の名詞用法でも、ifの代用になるようなケースがあります。\n\n\n> To believe his story would be foolish.\n> （彼の話を信じることは、愚かなことでしょう。）\n\n> It would be exciting to visit Mars someday.\n> （いつか火星を訪れることは、刺激的なことでしょうね。）\n\n名詞用法の場合、直訳すると「もし～」という意味が読み取りにくいですが、意味合いとしては「もし～したら」というニュアンスを含んでいます。\n\n「彼の話を信じこと⇒仮に彼の話を信じるとしたら」\n「火星を訪れることは⇒仮に火星を訪れるとしたら」\nというようなニュアンスです。\n\n\n",
+    "tags": ["基本"],
+    "author_comment": null
+  },
+  {
+    "id": "k017",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 20,
+    "title": "If節のない仮定法：otherwise",
+    "construction": true,
+    "explanation": "**otherwise** は、前の文の内容と反対の仮定を表し、**if 節の代わり**になります。「そうでなければ」「でなければ」という意味です。\n\n> I was busy; otherwise I would have come.\n> （忙しかった。そうでなければ行っていたのに）\n\n> If I hadn't been busy, I would have come. と同じ意味です。\n\n> I didn't know; otherwise I would have told you.\n> （知らなかった。知っていれば伝えていたのに）\n\notherwise の前にはたいていセミコロンかピリオドが置かれ、前の文で述べた事実と「もしそうでなかったら」を対比させます。"
+  },
+  {
+    "id": "k018",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 21,
+    "title": "If節のない仮定法：名詞 ＋ and ～",
+    "construction": true,
+    "explanation": "**名詞（句）＋ and ＋ 主節** の形で、if 節に代わる条件を表すことがあります。「～したら」「もう少し～なら」という仮定の意味になります。\n\n> One more step and I would have fallen.\n> （あと一歩で落ちていた）\n\n> If I had taken one more step, I would have fallen. と同じ意味です。\n\n> A little more effort and you would have passed.\n> （もう少し努力すれば合格していたのに）\n\nand の前の名詞句が条件、後ろが結果を表します。"
+  },
+  {
+    "id": "k019",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 22,
+    "title": "If節のない仮定法：a 名詞 would ～",
+    "construction": true,
+    "explanation": "**a ＋ 名詞 ＋ would ～** の形で、if 節に代わる条件を表すことがあります。「～な人なら～するだろう」という仮定を含みます。\n\n> A gentleman would never do that.\n> （紳士ならそんなことはしないでしょう）\n\n> If he were a gentleman, he would never do that. と同じ意味です。\n\n> A wiser person would have refused.\n> （もっと賢い人なら断っていたでしょう）\n\n「a ＋ 名詞」が「もし～なら」という仮定を担い、would 以下がその結果を表します。"
+  },
+  {
+    "id": "k020",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 23,
+    "title": "If節のない仮定法：What would ～ do 型",
+    "construction": true,
+    "explanation": "**What would you do ～ ?** のような疑問文は、仮定の状況を問う形で、if 節の内容を疑問詞に含むことがあります。\n\n> What would you do if you won the lottery?\n> （宝くじに当たったら何をしますか？）\n\n> What would I do without you?\n> （あなたがいなかったら私はどうすればいいの？）\n\n後者は「If I didn't have you, what would I do?」と同じ意味です。\n\n「どうする？」「何が起きる？」と仮定の結果を尋ねる形で、if 節が省略されているか、疑問文に織り込まれています。"
+  },
+  {
+    "id": "k021",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 24,
+    "title": "If節のない仮定法：主節のみのケース",
+    "construction": true,
+    "explanation": "**主節だけ**が表に出て、if 節が文脈や会話から明らかな場合は省略されます。\n\n> I would have helped.\n> （手伝っていたのに）\n\n「（頼まれてたら／言われてたら）手伝っていた」といった if 節が省略されています。\n\n> That would be nice.\n> （それはいいですね）\n\n相手の提案や発言に対して「そうなったらいいな」と応じるときに使います。if 節は会話の流れから推測されます。\n\n主節のみの形は、相手の発言への相づちや、状況が明らかな場面でよく使われます。"
+  },
+  {
+    "id": "k023",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 25,
+    "title": "慣用表現：If I were you",
+    "construction": true,
+    "explanation": "**If I were you** は「もし私があなたなら」という意味の慣用表現です。相手にアドバイスや提案をするときによく使います。\n\n> If I were you, I would accept the offer.\n> （私があなたなら、その申し出を受けます）\n\n> If I were you, I wouldn't do that.\n> （私があなたなら、そんなことはしません）\n\n主節を先に言うこともあります。\n\n> I would apologize if I were you.\n> （私があなたなら謝ります）\n\n仮定法過去の典型的な形で、「I were」は仮定法の be動詞です。"
+  },
+  {
+    "id": "k024",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 26,
+    "title": "慣用表現：If it were not for",
+    "construction": true,
+    "explanation": "**If it were not for ～** は「もし～がなければ」という意味の慣用表現です。**現在**の仮定に使います。\n\n> If it were not for your help, I couldn't do this.\n> （あなたの助けがなければ、これはできません）\n\n> If it were not for water, nothing could live.\n> （水がなければ、何も生きられません）\n\n**Were it not for ～** と倒置することもあります。\n\n> Were it not for your support, I would give up.\n> （あなたの支えがなければ、諦めていたでしょう）\n\n**Without ～** や **But for ～** と同じ意味になります。"
+  },
+  {
+    "id": "k025",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 27,
+    "title": "慣用表現：If it had not been for",
+    "construction": true,
+    "explanation": "**If it had not been for ～** は「もし～がなかったら」という意味の慣用表現です。**過去**の仮定に使います。\n\n> If it had not been for your advice, I would have failed.\n> （あなたのアドバイスがなかったら、失敗していたでしょう）\n\n> If it had not been for the accident, he would be alive now.\n> （あの事故がなければ、彼は今も生きているでしょう）\n\n**Had it not been for ～** と倒置することもあります。\n\n> Had it not been for her help, I couldn't have finished.\n> （彼女の助けがなかったら、終わらせられなかったでしょう）\n\n「If it were not for」の過去版で、**Without ～** や **But for ～** と同じ意味になります。"
+  },
+  {
+    "id": "k027",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 28,
+    "title": "慣用表現：It is time",
+    "construction": true,
+    "explanation": "**It is time ＋ 仮定法過去** で「もう～してもいい頃だ」「そろそろ～すべきだ」という意味になります。\n\n> It is time we left.\n> （そろそろ出発すべきだ）\n\n> It is time you went to bed.\n> （もう寝る時間だよ）\n\n**It is high time** や **It is about time** で強調することもあります。\n\n> It is high time you got a job.\n> （いい加減、仕事を見つけるべきだ）\n\n> It is about time she apologized.\n> （そろそろ彼女は謝るべきだ）\n\n形は仮定法過去（過去形）ですが、意味は**現在**のことです。「本来そうあるべきなのに、まだそうなっていない」という含みがあります。"
+  },
+  {
+    "id": "k028",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 15,
+    "title": "as if / as though",
+    "construction": true,
+    "explanation": "**as if** と **as though** は「まるで～のように」という意味で、後ろに仮定法を取ります。見かけや様子を述べる表現です。\n\n**現在の様子（仮定法過去）**\n「今～のように見える／振る舞う」という意味です。実際にはそうではないことを含みます。\n\n> He talks as if he knew everything.\n> （彼は何でも知っているかのように話す）\n\n> She acts as though she were the boss.\n> （彼女はまるで上司のように振る舞う）\n\n**過去の様子（仮定法過去完了）**\n「あのとき～のように見えた」という意味です。\n\n> She looked as if she had seen a ghost.\n> （彼女は幽霊を見たかのような顔をしていた）\n\n> He spoke as though he had known her for years.\n> （まるで何年も前から知っているかのように話した）\n\nas if と as though は同じ意味で置き換えられます。"
+  },
+  {
+    "id": "k010",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 8,
+    "title": "混合仮定法",
+    "construction": true,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**混合仮定法**とは、if 節と主節で**時制を組み合わせる**仮定法です。\n\n仮定法過去は「今」の妄想、仮定法過去完了は「過去」の妄想で、if 節と主節の時制はそろっています。混合仮定法では、**過去の条件**と**今の結果**を組み合わせます。\n\n基本形：\n**If ＋ 主語 ＋ had ＋ 過去分詞 …, 主語 ＋ would ＋ 原形 …**\n\nif 節は仮定法過去完了（had ＋ 過去分詞）、主節は仮定法過去（would ＋ 原形）です。\n\n> If I had studied harder, I would have a better job now.\n> （あのときもっと勉強していたら、今はもっと良い仕事に就いているのに）\n\n> If she had taken the train, she would be here by now.\n> （彼女が電車に乗っていたら、今ごろここにいるのに）\n\n「あの時の選択が違っていたら、今はこうなっているのに」という、過去と現在をまたぐ妄想を表す形です。"
+  },
+  {
+    "id": "k032",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 29,
+    "title": "will",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "willと聞くと「未来形」というイメージがあると思いますが、willにはいろいろな意味があります。\n\n共通するコアイメージは、には「必ず～する」という**強い意志・確信**の意味があります。\n\nこの「必ず」感が will の核になります。\n「必ず」のコアイメージから派生した意味の一つが「未来形」となっていると考えてください。\n",
+    "author_comment": null
+  },
+  {
+    "id": "k033",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 30,
+    "title": "will(1)単純未来",
+    "construction": false,
+    "tags": ["基本"],
+    "explanation": "**単純未来**：今の時点から見た「これから起こること」を述べる用法です。\n中学でも習う「未来を表すwill」です。\n\n> The meeting will start at 3.\n> （会議は3時に始まります）\n\n> It will be sunny tomorrow.\n> （明日は晴れるでしょう）\n\nwillの中核的な意味は「強い意志」であることはお伝えしましたが、この用法では「意思」の意味合いは薄まっています。"
+  },
+  {
+    "id": "k034",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 31,
+    "title": "will(2)推量",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "willは「未来のこと」というイメージが強いと思いますが、**この推量のwillでは、話し手の「～だろう」「～のはずだ」という推測を表します**。\n\n> That will be the postman.\n> （あれは郵便配達員だろう）\n\n> You will have heard the news.\n> （その知らせはもう聞いているでしょう）\n"
+  },
+  {
+    "id": "k035",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 32,
+    "title": "will(3)強い意思",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**意思**：「～するつもりだ」「（必ず）～する」という話し手の意志・決意を表します。\n\n> I will never forget your kindness.\n> （あなたの親切は決して忘れません）\n\n> I won't tell anyone.\n> （誰にも言いません）\n\n拒否は won't（will not）で表し、強い意志の裏返しになります。"
+  },
+  {
+    "id": "k035r",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 33,
+    "title": "will(4)拒絶",
+    "construction": false,
+    "tags": ["基本"],
+    "explanation": "won't（will not）で「どうしても～しない」「絶対に～しない」という**強い拒絶**を表します。意思の will の裏返しで、断固として従わない・応じない態度を示します。\n\n> I won't do it.\n> （そんなことするもんか／絶対にしない）\n\n> He won't listen to anyone.\n> （彼は誰の言うことも聞こうとしない）\n\n> The child won't eat.\n> （その子はどうしても食べようとしない）\n\n依頼や勧めをはっきり断る場面でよく使われます。"
+  },
+  {
+    "id": "k037",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 34,
+    "title": "will(5)習性",
+    "construction": false,
+    "tags": ["基本"],
+    "explanation": "**習性**：習慣・傾向を表す用法です。過去・現在を通じての習慣（「よく～する」「～しがちだ」）、現在の反復的な行動（「いつも～する」）、また物の性質・傾向を含みます。無生物主語では「～しようとしても～しない」という抵抗の意味にもなります。\n\n> He will often work late.\n> （彼はよく遅くまで働く）\n\n> The door won't open.\n> （ドアが開かない／開こうとしない）\n\n> She will sit there for hours.\n> （彼女はいつも何時間もそこに座っている）\n\n> Boys will be boys.\n> （子供は子供だ／仕方ない）"
+  },
+  {
+    "id": "k038w",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 35,
+    "title": "would",
+    "construction": false,
+    "tags": ["基本"],
+    "explanation": "**would** について、特殊な意味合いで使われることが多いので、意外と整理できていない場合が多いのではないでしょうか。\n\nwouldの主な使い方は以下の通りです。\n\n①強い意思・拒絶\n②推量（～だろう）\n③過去の習慣（よく～したものだ）\n④丁寧な依頼（Would you～）\n⑤willの過去形（時制の一致）\n⑥仮定法（復習）\n"
+  },
+  {
+    "id": "k038w1",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 37,
+    "title": "would(2)固執・拒絶",
+    "construction": false,
+    "tags": ["基本"],
+    "explanation": "will の「強い意志」が過去形になった用法で、「どうしても～した」「～しようとしなかった」と、過去の強い意志や拒否を表します。\n\n> He would not listen to me.\n> （彼は私の話を聞こうとしなかった）\n\n> She would have her own way.\n> （彼女は自分のやり方を押し通した）\n\n否定の wouldn't は「どうしても～しなかった」という拒絶のニュアンスになります。"
+  },
+  {
+    "id": "k038w2",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 36,
+    "title": "would(1)推量",
+    "construction": false,
+    "tags": ["基本"],
+    "explanation": "**would②推量**：「～だろう」「～だっただろう」と、話し手の推測を表します。will の推量の過去形で、過去の時点での推量や、控えめな推量に使います。\n\n> That would be in 1990.\n> （それは1990年頃だっただろう）\n\n> I thought he would agree.\n> （彼は同意するだろうと思った）\n\nwill より断定を避けた、やわらかい推量になります。"
+  },
+  {
+    "id": "k038w3",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 38,
+    "title": "would(3)過去の習慣",
+    "construction": false,
+    "tags": ["基本"],
+    "explanation": "**would③過去の習慣**：「よく～したものだ」「いつも～していた」と、過去の反復的な習慣を表します。used to に近い意味ですが、would は動作動詞と結びつくことが多いです。\n\n> He would often sit there for hours.\n> （彼はよく何時間もそこに座っていたものだ）\n\n> When I was young, I would play in this park.\n> （子供の頃、よくこの公園で遊んだものだ）\n\n懐かしい回想のニュアンスがあります。"
+  },
+  {
+    "id": "k038w4",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 39,
+    "title": "would(4)丁寧な依頼",
+    "construction": false,
+    "tags": ["基本"],
+    "explanation": "**would④丁寧な依頼**：**Would you ...?** で「～していただけますか」と丁寧に依頼する定型表現です。Will you ...? より柔らかく、よく使われます。\n\n> Would you open the window?\n> （窓を開けていただけますか）\n\n> Would you pass me the salt?\n> （塩を取っていただけますか）\n\nWould you mind ...? で「～していただいてもよろしいですか」とさらに丁寧な依頼になります。"
+  },
+  {
+    "id": "k038w5",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 40,
+    "title": "would(5)willの過去形（時制の一致）",
+    "construction": false,
+    "tags": ["基本"],
+    "explanation": "**would⑤willの過去形（時制の一致）**：間接話法や従属節で、主節の動詞が過去形のとき、will が would にずれます。\n\n> He said, \"I will come.\" → He said (that) he would come.\n> （彼は「来ます」と言った → 彼は来ると言った）\n\n> I knew she would be late.\n> （彼女は遅れるだろうと分かっていた）\n\n「未来」の意味は保ったまま、形だけ過去形になる用法です。"
+  },
+  {
+    "id": "k038",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 41,
+    "title": "may",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**may** は will と違って、**「50％程度の確度」**を表す助動詞です。\n\n「起こるかもしれないし、起こらないかもしれない」という、どちらにも傾かない中間の可能性が may の核です。このニュアンスから、許可（～してよい）や推量（～かもしれない）などの用法が派生します。",
+    "author_comment": null
+  },
+  {
+    "id": "k038a",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 44,
+    "title": "might",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**might** は、歴史的にはmayの過去形であったものの、現在はmayと同じような意味合いで使われる。\nmight=mayの過去形=過去の話、という認識は誤りの元なので注意する。\n\n> It may rain later. / It might rain later.\n> （あとで雨が降るかもしれない）\n\nどちらも「現在・未来の可能性」を表ます。\n\nmight のほうがmayよりやや控えめで不確かさが強いですが、受験ではあまり意識する必要はないでしょう。might≒mayの認識でOKです。",
+    "author_comment": null
+  },
+  {
+    "id": "k038b",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 45,
+    "title": "might+完了形",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "might have ＋ 過去分詞** の形で、「（過去に）～したかもしれない」という**過去の出来事に対する推量**を表します。\n\n> He might have left already.\n> （彼はもう帰ったかもしれない）\n\n> She might have forgotten the meeting.\n> （彼女は会議のことを忘れたかもしれない）\n\n現在・未来の推量は might ＋ 原形（It might rain.）ですが、**過去**について「そうだったかもしれない」と推し量るときは might have done を使います。may have done も同様の意味で使われます。",
+    "author_comment": null
+  },
+  {
+    "id": "k047",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 46,
+    "title": "must",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**must** のコアイメージは、**「これ以外ありえない！」** という**主観的な確信**です。\n\n話し手が「ほかに選択肢はない」「そうに決まっている」と強く思い込んでいる気持ちが must の核にあります。\n\nこの確信が、文脈に応じて「～しなければならない」（義務）や「～にちがいない」（推定）といった用法として現れます。\n\n一方で、ほとんど似た意味を持つhave toは「客観的」なニュアンスを伴います。must＝主観、have to＝客観というのは押さえておきましょう。\n",
+    "author_comment": null
+  },
+  {
+    "id": "k044",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 47,
+    "title": "must(1)義務",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**must①義務**：「～しなければならない」「～する必要がある」と、**義務・必要性**を表す用法です。\n\n> You must finish the report by Friday.\n> （金曜までにレポートを仕上げなければならない）\n\n> Students must wear a uniform.\n> （生徒は制服を着用しなければならない）\n\n話し手の強い要請や、規則・ルールとしての「ねばならない」を表します。\n",
+    "author_comment": null
+  },
+  {
+    "id": "k045",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 48,
+    "title": "must(2)推定",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**must②推定**：「～にちがいない」「きっと～だ」と、**根拠に基づく強い推量**を表す用法です。\n\n> That must be the postman.\n> （あれは郵便配達員にちがいない）\n\n> She must be tired after the long trip.\n> （長旅のあとだから、彼女は疲れているにちがいない）\n\n**過去の推定**は **must have ＋ 過去分詞** です。\n\n> He must have left early.\n> （彼は早く出たにちがいない）\n\n※注意：この「推定」の**否定**は must not ではありません。**can't** を使います（「～であるはずがない」）。詳しくは「must not（禁止）」のカードを参照してください。"
+  },
+  {
+    "id": "k046",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 49,
+    "title": "must not：禁止",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**must not（mustn't）** は「～してはならない」という**禁止**を表します。must の「義務」の否定形です。\n\n> You must not park here.\n> （ここに駐車してはならない）\n\n> You mustn't tell anyone.\n> （誰にも言ってはいけません）\n\n---\n\n**重要：推定の否定にはならない**\n\nmust には「義務」と「推定」の2つの意味がありますが、**must not が表すのは「義務の否定＝禁止」だけ**です。\n\n「推定」の否定（「～であるはずがない」「～ではありえない」）には **must not は使えません**。その場合は **can't** を使います。\n\n> He can't be at home now. （彼が今家にいるはずがない）\n> ✕ He mustn't be at home now.\n\n> She can't have said that. （彼女がそんなことを言ったはずがない）\n> ✕ She mustn't have said that.\n\nまとめ：**禁止 = must not**／**推定の否定 = can't（can't have ＋ 過去分詞）**",
+    "author_comment": null
+  },
+  {
+    "id": "k048",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 50,
+    "title": "have to",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**have to** は「～しなければならない」と**義務・必要性**を表す表現です。must と意味は近いですが、have to は**外的な要因**（規則・状況・他者からの要請など）に基づく「ねばならない」というニュアンスがあります。\n\n> I have to finish this by tomorrow.\n> （明日までにこれを仕上げなければならない）\n\n主語に応じて **has to**（三人称単数現在）、**had to**（過去）、**will have to**（未来）と形が変わります。must と同様、義務・推量の用法があります。"
+  },
+  {
+    "id": "k049",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 51,
+    "title": "have to(1)義務",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**have to①義務**：「～しなければならない」「～する必要がある」と、**義務・必要性**を表す用法です。must の義務とほぼ同じ意味で使われます。\n\n> You have to submit the form by Friday.\n> （金曜までにその用紙を提出しなければならない）\n\n> She has to take the train.\n> （彼女は電車に乗る必要がある）\n\n**must との違い**：must は話し手の主観的な「ねばならない」、have to は規則・状況など**外的な理由**による「ねばならない」という説明をすることが多いです。ただし実際の使い分けは文脈によります。"
+  },
+  {
+    "id": "k050",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 52,
+    "title": "have to(2)推量",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**have to②推量**：「～にちがいない」「きっと～だ」と、**強い推量**を表す用法です。must の推量と同様で、くだけた言い方では have (got) to がよく使われます。\n\n> That has to be the answer.\n> （それが答えにちがいない）\n\n> He has to be joking.\n> （彼は冗談を言っているにちがいない）\n\n**過去の推量**は **had to have ＋ 過去分詞** の形になることがありますが、やや硬い表現です。推量では must have done のほうが一般的です。"
+  },
+  {
+    "id": "k052",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 54,
+    "title": "had to（過去形）",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**had to** は have to の**過去形**で、「～しなければならなかった」「～する必要があった」と、**過去の義務・必要性**を表します。\n\n> I had to finish the report by yesterday.\n> （昨日までにレポートを仕上げなければならなかった）\n\n> She had to take the train because her car broke down.\n> （車が故障したので、彼女は電車に乗る必要があった）\n\nmust には過去形がないため、過去の義務を表すときは **had to** を使います。"
+  },
+  {
+    "id": "k053",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 55,
+    "title": "will have to（未来形）",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**will have to** は have to の**未来形**で、「～しなければならないだろう」「～する必要があるだろう」と、**未来の義務・必要性**を表します。\n\n> You will have to submit the form by next week.\n> （来週までにその用紙を提出しなければならないでしょう）\n\n> We will have to leave early tomorrow.\n> （明日は早く出発する必要があるだろう）\n\nmust は現在・未来の両方に使えますが、未来の義務をはっきり示すときは **will have to** がよく使われます。"
+  },
+  {
+    "id": "k051",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 53,
+    "title": "don't have to：する必要がない",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**don't have to** は「～する必要がない」「～しなくてもよい」という意味です。**義務がない**ことを表し、「してもいいし、しなくてもいい」という**選択の余地**があります。\n\n> You don't have to come if you're busy.\n> （忙しければ来なくてもいいですよ）\n\n> We don't have to decide today.\n> （今日決める必要はありません）\n\n---\n\n**must との違いの整理**\n\n| 表現 | 意味 | 例 |\n|------|------|-----|\n| **must** | ～しなければならない（義務） | You must go. （行かなければならない） |\n| **must not** | ～してはならない（**禁止**） | You must not go. （行ってはならない） |\n| **don't have to** | ～する必要がない（**義務がない**） | You don't have to go. （行かなくてもいい） |\n\n**must not** ＝ してはいけない（禁止）。\n**don't have to** ＝ しなくてもいい（義務がないだけ）。\n\n> You must not tell anyone. （誰にも言ってはならない）\n> You don't have to tell anyone. （誰にも言う必要はない／言わなくてもいい）"
+  },
+  {
+    "id": "k039",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 42,
+    "title": "may①許可",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**may①許可**：「～してよい」と、許可を与える・許可を求める用法です。\n\n> You may leave now.\n> （もう帰ってよいですよ）\n\n> May I use your phone?\n> （電話を借りてもいいですか）\n\n依頼の **May I ...?** は「～してもいいですか」と丁寧に許可を求める定型表現です。",
+    "author_comment": null
+  },
+  {
+    "id": "k040",
+    "type": "grammar",
+    "topic": "助動詞",
+    "order": 43,
+    "title": "may②推量",
+    "construction": false,
+    "tags": [
+      "基本"
+    ],
+    "explanation": "**may②推量**：「～かもしれない」と、実現の可能性を述べる用法です。may の「50％程度の確度」がそのまま表れ、断定を避けた推量になります。\n\n> It may rain later.\n> （あとで雨が降るかもしれない）\n\n> He may not agree.\n> （彼は同意しないかもしれない）\n\n> She may be busy.\n> （彼女は忙しいかもしれない）",
+    "author_comment": null
+  },
+  {
+    "id": "k043",
+    "type": "grammar",
+    "topic": "仮定法",
+    "order": 16,
+    "title": "if節のない仮定法：I wish",
+    "explanation": "> **I wishの仮定法の基本形**\n>  I wish S 過去形：～ならよかったのに\n> I wish S had 過去分詞：～だったらよかったのに\n\n\nI wishの仮定法では、他の仮定法と違い、**助動詞の過去形が出てきません**。\nなぜかというと「I wish ～」の「～」の部分は、通常の仮定法の「if節」の部分にあたるからです。\n\n例えば以下の例文を考えてみましょう。\n\n> I wish I were a king.\n> （私が王様だったらいいのになあ。）\n\nこの場合、I were a kingの部分は、通常の仮定法だったら「if節」の内容になりますよね。\nそして、仮定法の構文では、if節にはwouldは使いませんでした。\n\n> 仮定法過去の基本形\n> **If ＋ 主語 ＋ 過去形 …, 主語 ＋ would ＋ 原形 …**\n> if 節には過去形、主節には would ＋ 動詞の原形を用いる。※could / might / should も主節で使う。\n\nこの「If+主語+過去形」の部分が、「願う」対象になっているのが、I wishの形です。\n\n\n\n\n",
+    "construction": true,
+    "tags": [
+      "基本"
+    ],
+    "author_comment": null
+  }
+]

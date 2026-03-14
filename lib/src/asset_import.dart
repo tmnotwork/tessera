@@ -63,12 +63,12 @@ class AssetImport {
     String knowledgeJson;
     String questionsJson;
     try {
-      knowledgeJson = await rootBundle.loadString('asset/knowledge.json');
-      questionsJson = await rootBundle.loadString('asset/questions.json');
+      knowledgeJson = await rootBundle.loadString('assets/knowledge.json');
+      questionsJson = await rootBundle.loadString('assets/questions.json');
     } catch (e) {
       throw Exception(
         'アセットの読み込みに失敗しました。'
-        ' pubspec.yaml の assets に asset/knowledge.json と asset/questions.json が含まれているか確認してください。\n$e',
+        ' pubspec.yaml の assets に assets/knowledge.json と assets/questions.json が含まれているか確認してください。\n$e',
       );
     }
 

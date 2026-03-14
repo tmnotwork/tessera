@@ -7,6 +7,7 @@ import '../utils/platform_utils.dart';
 import '../widgets/edit_intents.dart';
 import '../widgets/explanation_text.dart';
 import 'knowledge_edit_screen.dart';
+import 'question_solve_screen.dart';
 
 /// 知識カード詳細画面
 ///
@@ -56,6 +57,9 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
   bool _isLeftHovering = false;
   bool _isRightHovering = false;
 
+  /// 各知識に紐づく問題ID（knowledgeId -> [questionId, ...]）
+  final Map<String, List<String>> _linkedQuestions = {};
+
   @override
   void initState() {
     super.initState();
@@ -64,6 +68,67 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
     _pageController = PageController(initialPage: _currentIndex);
     _isEditing = isDesktop && widget.initialEditing;
     _initControllersFromCurrent();
+    _loadLinkedQuestions();
+  }
+
+  /// 知識に紐づく問題を取得（四択・テキスト入力など全形式）
+  /// API の knowledge_id は大文字小文字の差がある場合があるので正規化して照合する。
+  Future<void> _loadLinkedQuestions() async {
+    if (_allKnowledge.isEmpty) return;
+    try {
+      final client = Supabase.instance.client;
+      final knowledgeIds = _allKnowledge.map((k) => k.id).toList();
+      final normalizedToOriginal = <String, String>{};
+      final byKnowledge = <String, List<String>>{};
+      for (final k in _allKnowledge) {
+        byKnowledge[k.id] = [];
+        normalizedToOriginal[k.id.toString().trim().toLowerCase()] = k.id;
+      }
+      try {
+        final fromDirect = await client.from('questions').select('id, knowledge_id').inFilter('knowledge_id', knowledgeIds);
+        for (final row in fromDirect as List) {
+          final r = row as Map<String, dynamic>;
+          final qId = r['id']?.toString();
+          final rawK = r['knowledge_id']?.toString();
+          final kIdNorm = rawK != null ? rawK.trim().toLowerCase() : null;
+          final kId = kIdNorm != null ? normalizedToOriginal[kIdNorm] : null;
+          if (qId != null && kId != null && !byKnowledge[kId]!.contains(qId)) {
+            byKnowledge[kId]!.add(qId);
+          }
+        }
+      } catch (_) {}
+      try {
+        final junc = await client.from('question_knowledge').select('question_id, knowledge_id').inFilter('knowledge_id', knowledgeIds);
+        for (final row in junc as List) {
+          final r = row as Map<String, dynamic>;
+          final qId = r['question_id']?.toString();
+          final rawK2 = r['knowledge_id']?.toString();
+          final kIdNorm = rawK2 != null ? rawK2.trim().toLowerCase() : null;
+          final kId = kIdNorm != null ? normalizedToOriginal[kIdNorm] : null;
+          if (qId != null && kId != null && !byKnowledge[kId]!.contains(qId)) {
+            byKnowledge[kId]!.add(qId);
+          }
+        }
+      } catch (_) {}
+
+      // DB に存在する問題だけに絞る（削除済み問題の question_knowledge 残骸で件数が膨らまないように）
+      final allQIds = byKnowledge.values.expand((l) => l).toSet().toList();
+      if (allQIds.isNotEmpty) {
+        try {
+          final existingRows = await client.from('questions').select('id').inFilter('id', allQIds);
+          final existingIds = (existingRows as List).map((r) => (r as Map<String, dynamic>)['id']?.toString()).where((id) => id != null && id.isNotEmpty).cast<String>().toSet();
+          for (final k in byKnowledge.keys.toList()) {
+            byKnowledge[k] = byKnowledge[k]!.where((id) => existingIds.contains(id)).toList();
+          }
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _linkedQuestions.clear();
+        _linkedQuestions.addAll(byKnowledge);
+      });
+    } catch (_) {}
   }
 
   void _initControllersFromCurrent() {
@@ -122,10 +187,10 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
           explanation: text,
           topic: topic,
           construction: _construction,
-          tags: _tags,
           authorComment: authorComment,
         ),
       ).eq('id', currentKnowledge.id);
+      await Knowledge.syncTags(client, currentKnowledge.id, _tags);
 
       if (mounted) {
         setState(() {
@@ -581,6 +646,32 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
     );
   }
 
+  Widget _buildPracticeLink(BuildContext context, Knowledge knowledge) {
+    final ids = _linkedQuestions[knowledge.id];
+    if (ids == null || ids.isEmpty) return const SizedBox.shrink();
+    final count = ids.length;
+    return Padding(
+      padding: const EdgeInsets.only(top: 24),
+      child: OutlinedButton.icon(
+        onPressed: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => QuestionSolveScreen(
+                questionIds: ids,
+                knowledgeTitle: knowledge.title,
+              ),
+            ),
+          );
+        },
+        icon: const Icon(Icons.quiz_outlined),
+        label: Text(count == 1 ? '問題を解く' : '問題を解く（$count 問）'),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+        ),
+      ),
+    );
+  }
+
   Widget _buildPageView(BuildContext context) {
     return Stack(
       children: [
@@ -597,39 +688,39 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
             final authorComment =
                 _savedAuthorComments[knowledge.id] ?? knowledge.authorComment ?? '';
 
-            return SelectionArea(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (topic != null || construction || tags.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Wrap(
-                        spacing: 8,
-                        children: [
-                          if (topic != null)
-                            Chip(
-                              label: Text(topic),
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (topic != null || construction || tags.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Wrap(
+                      spacing: 8,
+                      children: [
+                        if (topic != null)
+                          Chip(
+                            label: Text(topic),
+                            backgroundColor:
+                                Theme.of(context).colorScheme.surfaceContainerHighest,
+                          ),
+                        if (construction)
+                          Chip(
+                            label: const Text('構文'),
+                            backgroundColor:
+                                Theme.of(context).colorScheme.surfaceContainerHighest,
+                          ),
+                        ...tags.map((t) => Chip(
+                              label: Text(t),
                               backgroundColor:
                                   Theme.of(context).colorScheme.surfaceContainerHighest,
-                            ),
-                          if (construction)
-                            Chip(
-                              label: const Text('構文'),
-                              backgroundColor:
-                                  Theme.of(context).colorScheme.surfaceContainerHighest,
-                            ),
-                          ...tags.map((t) => Chip(
-                                label: Text(t),
-                                backgroundColor:
-                                    Theme.of(context).colorScheme.surfaceContainerHighest,
-                              )),
-                        ],
-                      ),
+                            )),
+                      ],
                     ),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(16.0),
+                  ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(16.0),
+                    child: SelectionArea(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -673,12 +764,13 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                               ),
                             ),
                           ],
+                          _buildPracticeLink(context, knowledge),
                         ],
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             );
           },
         ),

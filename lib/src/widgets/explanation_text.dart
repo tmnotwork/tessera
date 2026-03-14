@@ -61,9 +61,11 @@ class ExplanationText extends StatelessWidget {
     }
     flushBlockquote();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: widgets,
+    return SelectionArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: widgets,
+      ),
     );
   }
 }

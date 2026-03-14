@@ -52,12 +52,29 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
     });
     try {
       final client = Supabase.instance.client;
-      final rows = await client
-          .from('knowledge')
-          .select()
-          .eq('subject_id', widget.subjectId)
-          .order('display_order', ascending: true)
-          .order('created_at', ascending: true);
+      List<dynamic> rows;
+      try {
+        rows = await client
+            .from('knowledge')
+            .select('*, knowledge_card_tags(tag_id, knowledge_tags(name))')
+            .eq('subject_id', widget.subjectId)
+            .order('display_order', ascending: true)
+            .order('created_at', ascending: true);
+      } catch (e) {
+        final msg = e.toString();
+        if (msg.contains('knowledge_card_tags') ||
+            msg.contains('PGRST200') ||
+            msg.contains('relationship')) {
+          rows = await client
+              .from('knowledge')
+              .select()
+              .eq('subject_id', widget.subjectId)
+              .order('display_order', ascending: true)
+              .order('created_at', ascending: true);
+        } else {
+          rethrow;
+        }
+      }
 
       setState(() {
         _items = rows.map((r) => Knowledge.fromSupabase(r)).toList();
@@ -82,7 +99,6 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
         'content': '',
         'type': 'grammar',
         'construction': false,
-        'tags': <String>[],
         'display_order': maxOrder + 1,
       }).select().single();
 
@@ -351,19 +367,19 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
       ),
       body: _items.isEmpty
           ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text('カードがありません'),
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed: _addCard,
-                    icon: const Icon(Icons.add),
-                    label: const Text('最初のカードを追加'),
-                  ),
-                ],
-              ),
-            )
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text('カードがありません'),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: _addCard,
+                      icon: const Icon(Icons.add),
+                      label: const Text('最初のカードを追加'),
+                    ),
+                  ],
+                ),
+              )
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [

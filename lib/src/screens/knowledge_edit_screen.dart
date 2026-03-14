@@ -72,10 +72,10 @@ class _KnowledgeEditScreenState extends State<KnowledgeEditScreen> {
           explanation: _explanationController.text,
           topic: _topicController.text,
           construction: _construction,
-          tags: _tags,
           authorComment: _authorCommentController.text,
         ),
       ).eq('id', widget.currentKnowledge.id);
+      await Knowledge.syncTags(client, widget.currentKnowledge.id, _tags);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
