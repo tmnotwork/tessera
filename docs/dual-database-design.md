@@ -227,6 +227,114 @@ connectivitySubscription = Connectivity().onConnectivityChanged.listen((result) 
 });
 ```
 
+> **⚠ connectivity_plus の偽陽性に注意**
+> WiFi接続あり ≠ Supabaseに到達可能。SupabaseのAPIコールが失敗した場合も
+> 「オフライン扱い」として dirty=1 を維持し、次の復帰検知で再試行する。
+
+---
+
+## オフライン挙動の詳細設計
+
+### ケース1: 初回起動がオフラインだった場合
+
+`last_pull_at=null` のまま Pull を試みると失敗する。
+
+```
+対応:
+1. Pull失敗 → ローカルDBが空のまま
+2. 画面には「オフラインのため表示できません。ネット接続後に再起動してください」を表示
+3. last_pull_at は null のまま保持（= 次回起動時に再度全件Pullを試みる）
+
+初回起動時に一度でもオンライン状態を経ていれば、以降はローカルキャッシュで動作する。
+```
+
+### ケース2: クライアント側でのUUID生成（Push重複防止）
+
+**問題**: 現在はSupabaseがUUIDを生成する。
+オフラインで作成したレコードをPushする際に、ネット断→再試行が発生すると
+同じレコードが2件INSERTされる可能性がある。
+
+```
+対応:
+- ローカルDB INSERT時に、supabase_idをクライアント側で生成する（uuid パッケージを追加）
+- Supabaseへは常に UPSERT（ON CONFLICT supabase_id DO UPDATE）で送る
+- これにより何度リトライしても冪等になる
+
+実装:
+  import 'package:uuid/uuid.dart';
+  final supabase_id = const Uuid().v4(); // ローカル保存時に生成
+```
+
+> `uuid` パッケージを pubspec.yaml に追加する必要がある（現在未記載）。
+
+### ケース3: Push途中でネット断した場合
+
+```
+シナリオ: subjects をPush成功 → knowledge をPush中にネット断
+
+結果:
+- subjects: dirty=0（Push完了済み）
+- knowledge以降: dirty=1のまま（Push未完了）
+- Supabase側のsubjectsは更新済み
+
+次回復帰時の動作:
+- knowledge以降を再Push → 問題なし
+- UPSERTのため subjects の重複INSERTも発生しない
+
+⚠ 問題が起きるケース:
+- supabase_idがクライアント生成でない場合、Supabase側にINSERT成功済みだが
+  レスポンス受信前にネット断 → supabase_idがローカルにない → 次回INSERTで重複
+  → ケース2の UUID クライアント生成で解決する
+```
+
+### ケース4: 編集中にバックグラウンドPullが走った場合
+
+```
+シナリオ:
+- ユーザーがKnowledgeDetailScreenでカードAを編集中
+- 別デバイスがカードAを更新 → バックグラウンドPullがカードAをローカルに上書き
+
+対応方針:
+a) 編集中フラグ（is_editing）をSyncEngineに通知し、該当レコードのPull上書きをスキップ
+   → 編集完了時（保存/キャンセル）にPullを再実行
+
+b) または、Pull時に dirty=1 のレコードは上書きしない（既存のLast-Write-Wins方針と一致）
+   → ユーザーが保存した時点でローカルが新しくなり、次のPushで反映
+
+現フェーズでは (b) を採用（実装シンプル）。
+編集中に外部変更があっても、保存ボタンで上書きされるため実害は少ない。
+```
+
+### ケース5: is_syncing フラグがスタックした場合（クラッシュリカバリ）
+
+```
+シナリオ: 同期中にアプリがクラッシュ → is_syncing=true のまま次回起動
+
+対応:
+- 起動時に is_syncing=true を検出したら、前回の同期が不完全と判断
+- dirty=1 のレコードを全件確認し、supabase_id があるものはSupabaseに存在確認
+  （存在すれば dirty=0 に修正、なければ dirty=1 のまま）
+- または単純に is_syncing を false にリセットして再同期
+  （UPSERT のため重複はしない）
+
+実装コスト優先: 単純リセット方式を採用
+```
+
+### ケース6: オフライン中の操作キュー
+
+```
+オフライン中にユーザーが行える操作:
+- 知識カード・暗記カード・設問の閲覧 ✅（ローカルキャッシュから）
+- 知識カードの作成・編集・削除 ✅（ローカルに書き込み、dirty=1）
+- 並び替え ✅（ローカルで完結）
+- タグ編集 ✅（ローカルに書き込み）
+- アセットインポート ❌（Supabaseへのアクセスが必要）
+
+オフライン中に作成した複数レコードがFKで連鎖する場合:
+（例: 新Subject → 新Knowledge → 新MemorizationCard をオフラインで作成）
+→ 全てローカルIDで参照し、Push時にFK順でSupabase IDを解決する（既存方針）
+```
+
 ---
 
 ## UIでの考慮事項
@@ -284,7 +392,7 @@ KnowledgeRepository createRepository() {
 
 | ステップ | 内容 | 依存 |
 |---|---|---|
-| 1 | pubspec.yaml に `connectivity_plus` 追加 | なし |
+| 1 | pubspec.yaml に `connectivity_plus` / `uuid` 追加 | なし |
 | 2 | Supabaseスキーマに `deleted_at` 追加（migration作成） | なし |
 | 3 | ローカルDB全テーブル追加・マイグレーション機構整備 | なし |
 | 4 | `SyncMetadataStore` 実装 | ステップ3 |
