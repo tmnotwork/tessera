@@ -6,7 +6,7 @@
 
 1. [GitHub](https://github.com) にログインする
 2. 右上の **+** → **New repository**
-3. **Repository name** を入力（例: `learning_platform`）
+3. **Repository name** を入力（例: `tessera`）
 4. **Public** を選択（Private でも可）
 5. **「Add a README file」などはチェックしない**（ローカルに既にコードがあるため）
 6. **Create repository** をクリック
@@ -15,18 +15,18 @@
 
 GitHub でリポジトリを作成すると、表示されるコマンドのうち **「…or push an existing repository from the command line」** を使います。
 
-プロジェクトフォルダでターミナルを開き、次を実行します（`YOUR_USERNAME` と `learning_platform` は自分の GitHub ユーザー名・リポジトリ名に置き換えてください）:
+プロジェクトフォルダでターミナルを開き、次を実行します（`YOUR_USERNAME` は自分の GitHub ユーザー名に置き換えてください）:
 
 ```powershell
 cd c:\Users\tmnor\OneDrive\Dev\learning_platform
 
-git remote add origin https://github.com/YOUR_USERNAME/learning_platform.git
+git remote add origin https://github.com/YOUR_USERNAME/tessera.git
 git branch -M main
 git push -u origin main
 ```
 
 - **HTTPS** の場合は初回プッシュ時に GitHub のユーザー名とパスワード（または Personal Access Token）を聞かれます。
-- **SSH** を使う場合は `git remote add origin git@github.com:YOUR_USERNAME/learning_platform.git` にします。
+- **SSH** を使う場合は `git remote add origin git@github.com:YOUR_USERNAME/tessera.git` にします。
 
 ## 3. プッシュ後の確認
 

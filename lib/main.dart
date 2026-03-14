@@ -109,7 +109,7 @@ class RootApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Learning Platform',
+      title: 'Tessera',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
@@ -602,7 +602,7 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
 
 Future<Database> _initLocalDb() async {
   final dir = await getApplicationDocumentsDirectory();
-  final path = p.join(dir.path, 'learning_platform.db');
+  final path = p.join(dir.path, 'tessera.db');
 
   return openDatabase(
     path,

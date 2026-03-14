@@ -1,6 +1,6 @@
-# learning_platform
+# tessera
 
-A new Flutter project.
+Flutter 学習プラットフォームアプリ（Supabase 連携）。
 
 ## Getting Started
 
