@@ -196,6 +196,11 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
         final prevTopic = index > 0 ? _items[index - 1].unit : null;
         final showHeader = item.unit != prevTopic;
 
+        final tile = _buildListTile(context, item, index, draggable: true);
+        final dragListener = isDesktop
+            ? ReorderableDragStartListener(index: index, child: tile)
+            : ReorderableDelayedDragStartListener(index: index, child: tile);
+
         return KeyedSubtree(
           key: ValueKey(item.id),
           child: Column(
@@ -204,10 +209,7 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
             children: [
               if (showHeader)
                 _buildChapterHeader(context, item.unit ?? 'その他'),
-              ReorderableDragStartListener(
-                index: index,
-                child: _buildListTile(context, item, index, draggable: true),
-              ),
+              dragListener,
             ],
           ),
         );
@@ -367,7 +369,7 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
               children: [
                 _buildTagFilter(context),
                 Expanded(
-                  child: _filterTag == null && isDesktop
+                  child: _filterTag == null
                       ? _buildReorderableList(context)
                       : _buildPlainList(context),
                 ),
