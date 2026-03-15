@@ -16,7 +16,9 @@ import 'src/init_sqflite_stub.dart' if (dart.library.io) 'src/init_sqflite_io.da
 import 'src/screens/four_choice_list_screen.dart';
 import 'src/screens/knowledge_list_screen.dart';
 import 'src/screens/learner_home_screen.dart';
+import 'src/screens/learner_login_screen.dart';
 import 'src/screens/memorization_list_screen.dart';
+import 'src/screens/teacher_login_screen.dart';
 
 // 実機ビルドでは .env が同梱されないため、フォールバック用の公開キー
 const _fallbackSupabaseUrl = 'https://wnufzrehvhcwclnwxwim.supabase.co';
@@ -32,6 +34,7 @@ Future<void> main() async {
         url: _fallbackSupabaseUrl,
         anonKey: _fallbackSupabaseAnonKey,
       );
+      appAuthNotifier.init();
       runApp(const RootApp(localDb: null));
       return;
     }
@@ -57,6 +60,7 @@ Future<void> main() async {
     }
 
     await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+    appAuthNotifier.init();
     init_sqflite.initSqliteForDesktop();
     final localDb = await _initLocalDb();
     runApp(RootApp(localDb: localDb));
@@ -262,6 +266,35 @@ class RootScaffold extends StatefulWidget {
 
 class _RootScaffoldState extends State<RootScaffold> {
   int _index = 0;
+  String? _role;
+  bool _authReady = false;
+
+  @override
+  void initState() {
+    super.initState();
+    appAuthNotifier.listen(_onAuthChanged);
+    _refreshRole();
+  }
+
+  @override
+  void dispose() {
+    appAuthNotifier.dispose();
+    super.dispose();
+  }
+
+  void _onAuthChanged() {
+    if (mounted) _refreshRole();
+  }
+
+  Future<void> _refreshRole() async {
+    final role = await appAuthNotifier.fetchRole();
+    if (mounted) {
+      setState(() {
+        _role = role;
+        _authReady = true;
+      });
+    }
+  }
 
   void _switchToManageTab(BuildContext context) {
     final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
@@ -271,14 +304,62 @@ class _RootScaffoldState extends State<RootScaffold> {
     });
   }
 
+  Widget _buildLearnerTab() {
+    if (!_authReady) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (!appAuthNotifier.isLoggedIn) {
+      return const LearnerLoginScreen();
+    }
+    return LearnerHomeScreen(
+      onOpenManage: _role == 'teacher' ? () => setState(() => _index = 2) : null,
+    );
+  }
+
+  Widget _buildTeacherTab() {
+    if (!_authReady) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (!appAuthNotifier.isLoggedIn) {
+      return const TeacherLoginScreen();
+    }
+    if (_role == 'teacher') {
+      return TeacherAdminPage(localDb: widget.localDb);
+    }
+    // 学習者がこのタブを開いた場合
+    return Scaffold(
+      appBar: AppBar(title: const Text('教材管理')),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.lock_outline,
+                  size: 48, color: Theme.of(context).colorScheme.outline),
+              const SizedBox(height: 16),
+              const Text('このタブは教師専用です'),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                icon: const Icon(Icons.logout),
+                label: const Text('ログアウト'),
+                onPressed: () async {
+                  await appAuthNotifier.logout();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final pages = [
-      LearnerHomeScreen(
-        onOpenManage: () => setState(() => _index = 2),
-      ),
+      _buildLearnerTab(),
       KnowledgeDbHomePage(localDb: widget.localDb),
-      TeacherAdminPage(localDb: widget.localDb),
+      _buildTeacherTab(),
     ];
 
     openManageNotifier.openManage = (ctx) => _rootScaffoldKey.currentState?._switchToManageTab(ctx);

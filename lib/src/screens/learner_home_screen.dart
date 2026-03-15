@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../app_scope.dart';
 import 'knowledge_list_screen.dart';
 import 'memorization_list_screen.dart';
 import 'question_solve_screen.dart';
@@ -109,6 +110,13 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
             icon: const Icon(Icons.refresh),
             onPressed: _loading ? null : _fetchSubjects,
             tooltip: '再読み込み',
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'ログアウト',
+            onPressed: () async {
+              await appAuthNotifier.logout();
+            },
           ),
         ],
       ),
