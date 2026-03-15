@@ -57,6 +57,26 @@ class Knowledge {
     );
   }
 
+  /// ローカルDBの local_knowledge 行から生成。tags は local_knowledge_card_tags から別途渡す。
+  factory Knowledge.fromLocal(Map<String, dynamic> row, {List<String> tags = const []}) {
+    final localId = row['local_id'] as int?;
+    final supabaseId = row['supabase_id'] as String?;
+    final id = (supabaseId != null && supabaseId.isNotEmpty) ? supabaseId : 'local_$localId';
+    return Knowledge(
+      id: id,
+      subjectId: row['subject_id'] as String?,
+      subject: row['subject'] as String?,
+      unit: row['unit'] as String?,
+      content: row['content'] as String? ?? '',
+      description: row['description'] as String?,
+      type: row['type'] as String? ?? 'grammar',
+      displayOrder: row['display_order'] as int?,
+      construction: (row['construction'] == 1),
+      tags: List<String>.from(tags)..sort(),
+      authorComment: row['author_comment'] as String?,
+    );
+  }
+
   /// knowledge_card_tags(tag_id, knowledge_tags(name)) の embed 結果からタグ名を抽出
   static List<String> _parseTagsFromRow(Map<String, dynamic> row) {
     final raw = row['knowledge_card_tags'];

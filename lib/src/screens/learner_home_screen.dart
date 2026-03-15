@@ -27,7 +27,10 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchSubjects();
+    // ログイン直後のセッション確実反映後に取得する（教師タブと同様）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _fetchSubjects();
+    });
   }
 
   Future<void> _fetchSubjects() async {
@@ -206,6 +209,7 @@ class _LearnerSubjectPicker extends StatelessWidget {
                           builder: (context) => KnowledgeListScreen(
                             subjectId: subjectId,
                             subjectName: subjectName,
+                            isLearnerMode: true,
                           ),
                         ),
                       );

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../app_scope.dart';
 
@@ -35,18 +36,200 @@ class _TeacherLoginScreenState extends State<TeacherLoginScreen>
     super.dispose();
   }
 
+  static const int _minPasswordLength = 8;
+
+  bool _isValidEmail(String email) {
+    final t = email.trim();
+    if (t.isEmpty) return false;
+    final i = t.indexOf('@');
+    return i > 0 && i < t.length - 1;
+  }
+
+  bool _isEmailNotConfirmed(Object e) {
+    final msg = e.toString().toLowerCase();
+    return msg.contains('email_not_confirmed') || msg.contains('email not confirmed');
+  }
+
+  String _loginErrorMessage(Object e) {
+    final msg = e.toString().toLowerCase();
+    if (_isEmailNotConfirmed(e)) {
+      return 'メールアドレスがまだ確認されていません。\n'
+          '登録時に送信されたメールのリンクから確認を完了してください。\n'
+          '届かない場合は「確認メールを再送」を押してください。';
+    }
+    if (msg.contains('invalid_login_credentials') || msg.contains('invalid')) {
+      return 'メールアドレスまたはパスワードが正しくありません。';
+    }
+    return 'ログインに失敗しました。接続を確認するか、しばらく経ってからお試しください。';
+  }
+
+  Future<void> _showForgotPasswordDialog() async {
+    final email = _emailController.text.trim();
+    final controller = TextEditingController(text: email);
+    if (!mounted) return;
+    final submitted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('パスワードを忘れた'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '登録したメールアドレスを入力してください。パスワードリセット用のリンクを送信します。',
+              style: TextStyle(height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                labelText: 'メールアドレス',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.emailAddress,
+              autofocus: email.isEmpty,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('送信'),
+          ),
+        ],
+      ),
+    );
+    final targetEmail = controller.text.trim();
+    controller.dispose();
+    if (submitted != true || !mounted) return;
+    if (targetEmail.isEmpty) {
+      return;
+    }
+
+    setState(() => _loading = true);
+    try {
+      await appAuthNotifier.resetPasswordForEmail(targetEmail);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'パスワードリセット用のメールを送信しました。メールのリンクから新しいパスワードを設定してください。',
+            ),
+            duration: Duration(seconds: 6),
+          ),
+        );
+      }
+    } on AuthException catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('送信に失敗しました。メールアドレスを確認してください。'),
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('送信に失敗しました。接続を確認するか、しばらく経ってからお試しください。'),
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _resendConfirmation() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) return;
+
+    setState(() => _loading = true);
+    try {
+      await appAuthNotifier.resendConfirmationEmail(email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('確認メールを再送しました。届くまで少々お待ちください。迷惑メールもご確認ください。'),
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
+    } on AuthException catch (e) {
+      if (mounted) {
+        final msg = e.message.toLowerCase();
+        final alreadyConfirmed = msg.contains('already') ||
+            msg.contains('confirmed') ||
+            msg.contains('verified');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              alreadyConfirmed
+                  ? 'このメールはすでに確認済みです。ログインをお試しください。'
+                  : '再送に失敗しました。メールアドレスを確認するか、しばらく経ってからお試しください。',
+            ),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('再送に失敗しました。接続を確認するか、しばらく経ってからお試しください。'),
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   Future<void> _login() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text;
-    if (email.isEmpty || password.isEmpty) return;
+    if (email.isEmpty || password.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('メールアドレスとパスワードを入力してください。')),
+        );
+      }
+      return;
+    }
+    if (!_isValidEmail(email)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('有効なメールアドレスを入力してください。')),
+        );
+      }
+      return;
+    }
 
     setState(() => _loading = true);
     try {
       await appAuthNotifier.loginTeacher(email, password);
     } catch (e) {
       if (mounted) {
+        final isUnconfirmed = _isEmailNotConfirmed(e);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('ログインに失敗しました: $e')),
+          SnackBar(
+            content: Text(_loginErrorMessage(e)),
+            duration: const Duration(seconds: 6),
+            action: SnackBarAction(
+              label: isUnconfirmed ? '確認メールを再送' : 'OK',
+              onPressed: () {
+                if (isUnconfirmed) _resendConfirmation();
+              },
+            ),
+          ),
         );
       }
     } finally {
@@ -57,21 +240,88 @@ class _TeacherLoginScreenState extends State<TeacherLoginScreen>
   Future<void> _signUp() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text;
-    if (email.isEmpty || password.isEmpty) return;
+    if (email.isEmpty || password.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('メールアドレスとパスワードを入力してください。')),
+        );
+      }
+      return;
+    }
+    if (!_isValidEmail(email)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('有効なメールアドレスを入力してください。')),
+        );
+      }
+      return;
+    }
+    if (password.length < _minPasswordLength) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('パスワードは${_minPasswordLength}文字以上で入力してください。'),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+      return;
+    }
 
     setState(() => _loading = true);
     try {
-      await appAuthNotifier.signUpTeacher(email, password);
-      if (mounted) {
+      final response = await appAuthNotifier.signUpTeacher(email, password);
+      if (!mounted) return;
+      final identities = response.user?.identities;
+      final alreadyRegistered = identities == null || identities.isEmpty;
+      if (alreadyRegistered) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('登録しました。同じIDとパスワードでログインしてください。')),
+          const SnackBar(
+            content: Text(
+              'このメールアドレスはすでに登録されています。\nログインタブからログインしてください。',
+            ),
+            duration: Duration(seconds: 5),
+          ),
+        );
+        _tabController.animateTo(0);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              '登録しました。確認メールを送信しました。\n'
+              'メールのリンクをクリックして確認を完了してから、ログインしてください。',
+            ),
+            duration: Duration(seconds: 8),
+          ),
         );
         _tabController.animateTo(0);
       }
-    } catch (e) {
+    } on AuthException catch (e) {
+      if (mounted) {
+        final msg = e.message.toLowerCase();
+        final alreadyExists = msg.contains('already') ||
+            msg.contains('registered') ||
+            msg.contains('exists') ||
+            msg.contains('重複');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              alreadyExists
+                  ? 'このメールアドレスはすでに登録されています。ログインタブからログインしてください。'
+                  : '登録に失敗しました: ${e.message}',
+            ),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+        if (alreadyExists) _tabController.animateTo(0);
+      }
+    } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('登録に失敗しました: $e')),
+          const SnackBar(
+            content: Text('登録に失敗しました。接続を確認するか、しばらく経ってからお試しください。'),
+            duration: Duration(seconds: 5),
+          ),
         );
       }
     } finally {
@@ -133,6 +383,19 @@ class _TeacherLoginScreenState extends State<TeacherLoginScreen>
                       )
                     : Text(isLogin ? 'ログイン' : '新規登録'),
               ),
+              if (isLogin) ...[
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: _loading ? null : _showForgotPasswordDialog,
+                  child: const Text('パスワードを忘れた'),
+                ),
+                const SizedBox(height: 8),
+                TextButton.icon(
+                  onPressed: _loading ? null : _resendConfirmation,
+                  icon: const Icon(Icons.email_outlined, size: 18),
+                  label: const Text('メールが届いていませんか？ 確認メールを再送'),
+                ),
+              ],
             ],
           ),
         ),
@@ -142,7 +405,6 @@ class _TeacherLoginScreenState extends State<TeacherLoginScreen>
 
   @override
   Widget build(BuildContext context) {
-    final isLogin = _tabController.index == 0;
     return Scaffold(
       appBar: AppBar(
         title: const Text('教材管理'),

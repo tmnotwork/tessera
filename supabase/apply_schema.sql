@@ -253,4 +253,24 @@ CREATE POLICY "question_knowledge: anon update" ON public.question_knowledge FOR
 DROP POLICY IF EXISTS "question_knowledge: anon delete" ON public.question_knowledge;
 CREATE POLICY "question_knowledge: anon delete" ON public.question_knowledge FOR DELETE TO anon USING (true);
 
+-- 8) 同期用 deleted_at（モバイル/デスクトップの SyncEngine 用。本番はマイグレーション 00014 を推奨）
+ALTER TABLE public.subjects
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE public.knowledge
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE public.memorization_cards
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE public.questions
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE public.question_choices
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE public.question_choices
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+UPDATE public.question_choices SET updated_at = created_at WHERE updated_at IS NULL;
+ALTER TABLE public.question_choices ALTER COLUMN updated_at SET DEFAULT now();
+DROP TRIGGER IF EXISTS trg_question_choices_updated_at ON public.question_choices;
+CREATE TRIGGER trg_question_choices_updated_at
+  BEFORE UPDATE ON public.question_choices
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
 -- スキーマキャッシュを更新するため、Supabase は自動で行う。問題があればダッシュボードで「API を再読み込み」を実行。

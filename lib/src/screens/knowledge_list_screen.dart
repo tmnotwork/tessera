@@ -1,7 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../database/local_database.dart';
 import '../models/knowledge.dart';
+import '../repositories/knowledge_repository.dart';
+import '../sync/sync_engine.dart';
 import '../utils/platform_utils.dart';
 import 'knowledge_detail_screen.dart';
 
@@ -11,10 +15,15 @@ class KnowledgeListScreen extends StatefulWidget {
     super.key,
     required this.subjectId,
     required this.subjectName,
+    this.localDatabase,
+    this.isLearnerMode = false,
   });
 
   final String subjectId;
   final String subjectName;
+  final LocalDatabase? localDatabase;
+  /// true: 学習メニューから開いた場合。閲覧のみ・編集不可・問題リンク表示。
+  final bool isLearnerMode;
 
   @override
   State<KnowledgeListScreen> createState() => _KnowledgeListScreenState();
@@ -45,79 +54,139 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
     _load();
   }
 
+  /// Supabase から knowledge を subject_id で取得。join 失敗時は select のみでリトライ。
+  Future<List<Knowledge>> _fetchKnowledgeFromSupabase() async {
+    final client = Supabase.instance.client;
+    List<dynamic> rows;
+    try {
+      if (kDebugMode) debugPrint('[KnowledgeListScreen] Supabase try1: select with knowledge_card_tags join');
+      rows = await client
+          .from('knowledge')
+          .select('*, knowledge_card_tags(tag_id, knowledge_tags(name))')
+          .eq('subject_id', widget.subjectId)
+          .order('display_order', ascending: true)
+          .order('created_at', ascending: true);
+      if (kDebugMode) debugPrint('[KnowledgeListScreen] Supabase try1 ok: count=${rows.length}');
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('[KnowledgeListScreen] Supabase try1 FAILED: $e');
+        debugPrint('[KnowledgeListScreen] try1 stack: $st');
+      }
+      final msg = e.toString();
+      if (msg.contains('knowledge_card_tags') ||
+          msg.contains('PGRST200') ||
+          msg.contains('relationship')) {
+        if (kDebugMode) debugPrint('[KnowledgeListScreen] Supabase try2: select() only (no join)');
+        rows = await client
+            .from('knowledge')
+            .select()
+            .eq('subject_id', widget.subjectId)
+            .order('display_order', ascending: true)
+            .order('created_at', ascending: true);
+        if (kDebugMode) debugPrint('[KnowledgeListScreen] Supabase try2 ok: count=${rows.length}');
+      } else {
+        rethrow;
+      }
+    }
+    return (rows as List<Map<String, dynamic>>).map(Knowledge.fromSupabase).toList();
+  }
+
   Future<void> _load() async {
     setState(() {
       _isLoading = true;
       _error = null;
     });
+    final dataSource = widget.localDatabase != null ? 'LocalDB' : 'Supabase';
+    if (kDebugMode) {
+      debugPrint('[KnowledgeListScreen._load] subjectId=${widget.subjectId}, dataSource=$dataSource');
+    }
     try {
-      final client = Supabase.instance.client;
-      List<dynamic> rows;
-      try {
-        rows = await client
-            .from('knowledge')
-            .select('*, knowledge_card_tags(tag_id, knowledge_tags(name))')
-            .eq('subject_id', widget.subjectId)
-            .order('display_order', ascending: true)
-            .order('created_at', ascending: true);
-      } catch (e) {
-        final msg = e.toString();
-        if (msg.contains('knowledge_card_tags') ||
-            msg.contains('PGRST200') ||
-            msg.contains('relationship')) {
-          rows = await client
-              .from('knowledge')
-              .select()
-              .eq('subject_id', widget.subjectId)
-              .order('display_order', ascending: true)
-              .order('created_at', ascending: true);
-        } else {
-          rethrow;
+      if (widget.localDatabase != null) {
+        final repo = createKnowledgeRepository(widget.localDatabase);
+        var list = await repo.getBySubject(widget.subjectId);
+        if (kDebugMode) debugPrint('[KnowledgeListScreen._load] LocalDB result: count=${list.length}');
+        // ローカルに 0 件のときは Supabase から取得する（Sync 未完了やリモートのみのデータ対応）
+        if (list.isEmpty) {
+          if (kDebugMode) debugPrint('[KnowledgeListScreen._load] LocalDB empty → fallback to Supabase');
+          list = await _fetchKnowledgeFromSupabase();
         }
+        if (mounted) setState(() => _items = list);
+      } else {
+        final list = await _fetchKnowledgeFromSupabase();
+        if (mounted) setState(() => _items = list);
       }
-
-      setState(() {
-        _items = rows.map((r) => Knowledge.fromSupabase(r)).toList();
-      });
-    } catch (e) {
-      setState(() => _error = e.toString());
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('[KnowledgeListScreen._load] FAILED: $e');
+        debugPrint('[KnowledgeListScreen._load] stack: $st');
+      }
+      if (mounted) setState(() => _error = e.toString());
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _addCard() async {
     try {
-      final client = Supabase.instance.client;
       final maxOrder = _items.isEmpty
           ? 0
           : _items.map((e) => e.displayOrder ?? 0).reduce((a, b) => a > b ? a : b);
 
-      final inserted = await client.from('knowledge').insert({
-        'subject_id': widget.subjectId,
-        'subject': widget.subjectName,
-        'content': '',
-        'type': 'grammar',
-        'construction': false,
-        'display_order': maxOrder + 1,
-      }).select().single();
-
-      final newCard = Knowledge.fromSupabase(inserted);
-      await _load();
-
-      if (mounted) {
-        final newIndex = _items.indexWhere((e) => e.id == newCard.id);
-        if (newIndex >= 0) {
-          final changed = await Navigator.of(context).push<bool>(
-            MaterialPageRoute<bool>(
-              builder: (context) => KnowledgeDetailScreen(
-                allKnowledge: _items,
-                initialIndex: newIndex,
-                initialEditing: true,
+      if (widget.localDatabase != null) {
+        final repo = createKnowledgeRepository(widget.localDatabase);
+        final newCard = Knowledge(
+          id: 'local_0',
+          content: '',
+          subjectId: widget.subjectId,
+          subject: widget.subjectName,
+          displayOrder: maxOrder + 1,
+        );
+        final saved = await repo.save(newCard, subjectId: widget.subjectId, subjectName: widget.subjectName);
+        if (SyncEngine.isInitialized) SyncEngine.instance.syncIfOnline();
+        await _load();
+        if (mounted) {
+          final newIndex = _items.indexWhere((e) => e.id == saved.id);
+          if (newIndex >= 0) {
+            final changed = await Navigator.of(context).push<bool>(
+              MaterialPageRoute<bool>(
+                builder: (context) => KnowledgeDetailScreen(
+                  allKnowledge: _items,
+                  initialIndex: newIndex,
+                  initialEditing: true,
+                ),
               ),
-            ),
-          );
-          if (changed == true && mounted) await _load();
+            );
+            if (changed == true && mounted) await _load();
+          }
+        }
+      } else {
+        final client = Supabase.instance.client;
+        final inserted = await client.from('knowledge').insert({
+          'subject_id': widget.subjectId,
+          'subject': widget.subjectName,
+          'content': '',
+          'type': 'grammar',
+          'construction': false,
+          'display_order': maxOrder + 1,
+        }).select().single();
+
+        final newCard = Knowledge.fromSupabase(inserted);
+        await _load();
+
+        if (mounted) {
+          final newIndex = _items.indexWhere((e) => e.id == newCard.id);
+          if (newIndex >= 0) {
+            final changed = await Navigator.of(context).push<bool>(
+              MaterialPageRoute<bool>(
+                builder: (context) => KnowledgeDetailScreen(
+                  allKnowledge: _items,
+                  initialIndex: newIndex,
+                  initialEditing: true,
+                ),
+              ),
+            );
+            if (changed == true && mounted) await _load();
+          }
         }
       }
     } catch (e) {
@@ -135,7 +204,7 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
         builder: (context) => KnowledgeDetailScreen(
           allKnowledge: _items,
           initialIndex: index,
-          initialEditing: isDesktop,
+          initialEditing: widget.isLearnerMode ? false : isDesktop,
         ),
       ),
     );
@@ -371,12 +440,14 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     const Text('カードがありません'),
-                    const SizedBox(height: 16),
-                    FilledButton.icon(
-                      onPressed: _addCard,
-                      icon: const Icon(Icons.add),
-                      label: const Text('最初のカードを追加'),
-                    ),
+                    if (!widget.isLearnerMode) ...[
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed: _addCard,
+                        icon: const Icon(Icons.add),
+                        label: const Text('最初のカードを追加'),
+                      ),
+                    ],
                   ],
                 ),
               )
@@ -385,13 +456,13 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
               children: [
                 _buildTagFilter(context),
                 Expanded(
-                  child: _filterTag == null
+                  child: _filterTag == null && !widget.isLearnerMode
                       ? _buildReorderableList(context)
                       : _buildPlainList(context),
                 ),
               ],
             ),
-      floatingActionButton: _items.isNotEmpty
+      floatingActionButton: !widget.isLearnerMode && _items.isNotEmpty
           ? FloatingActionButton(
               onPressed: _addCard,
               tooltip: 'カードを追加',

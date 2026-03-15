@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,12 +13,18 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'src/app_scope.dart';
 import 'src/asset_import.dart';
+import 'src/database/local_db.dart';
+import 'src/database/local_database.dart';
 import 'src/init_sqflite_stub.dart' if (dart.library.io) 'src/init_sqflite_io.dart' as init_sqflite;
+import 'src/repositories/subject_repository.dart';
+import 'src/sync/sync_engine.dart';
 import 'src/screens/four_choice_list_screen.dart';
 import 'src/screens/knowledge_list_screen.dart';
 import 'src/screens/learner_home_screen.dart';
 import 'src/screens/learner_login_screen.dart';
 import 'src/screens/memorization_list_screen.dart';
+import 'src/learner_admin.dart';
+import 'src/screens/learner_management_screen.dart';
 import 'src/screens/teacher_login_screen.dart';
 
 // 実機ビルドでは .env が同梱されないため、フォールバック用の公開キー
@@ -26,14 +33,15 @@ const _fallbackSupabaseAnonKey =
     'sb_publishable_6ZOloNwIgIFjF9SKRLGgmA_Yc55g0es';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
   runZonedGuarded(() async {
+    // runApp と同一ゾーンで binding を初期化（Zone mismatch 回避）
+    WidgetsFlutterBinding.ensureInitialized();
     if (kIsWeb) {
       await Supabase.initialize(
         url: _fallbackSupabaseUrl,
         anonKey: _fallbackSupabaseAnonKey,
       );
+      LearnerAdmin.initFromEnv(null, null); // Web ではサービスロールキーは使わない
       appAuthNotifier.init();
       runApp(const RootApp(localDb: null));
       return;
@@ -60,10 +68,19 @@ Future<void> main() async {
     }
 
     await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+    try {
+      final serviceRoleKey = dotenv.env['SUPABASE_SERVICE_ROLE_KEY']?.trim();
+      LearnerAdmin.initFromEnv(serviceRoleKey, supabaseUrl);
+    } catch (_) {
+      LearnerAdmin.initFromEnv(null, null);
+    }
     appAuthNotifier.init();
     init_sqflite.initSqliteForDesktop();
-    final localDb = await _initLocalDb();
-    runApp(RootApp(localDb: localDb));
+    final db = await _initLocalDb();
+    final localDatabase = LocalDatabase(db);
+    SyncEngine.init(localDatabase);
+    SyncEngine.instance.syncIfOnline();
+    runApp(RootApp(localDb: db, localDatabase: localDatabase));
   }, (error, stack) {
     if (kDebugMode) {
       debugPrint('$error\n$stack');
@@ -185,9 +202,10 @@ ThemeData _buildDarkTheme() {
 }
 
 class RootApp extends StatefulWidget {
-  const RootApp({super.key, required this.localDb});
+  const RootApp({super.key, required this.localDb, this.localDatabase});
 
   final Database? localDb;
+  final LocalDatabase? localDatabase;
 
   @override
   State<RootApp> createState() => _RootAppState();
@@ -248,17 +266,20 @@ class _RootAppState extends State<RootApp> {
       theme: _buildLightTheme(),
       darkTheme: _buildDarkTheme(),
       themeMode: _themeMode,
-      home: RootScaffold(key: _rootScaffoldKey, localDb: widget.localDb),
+      home: RootScaffold(key: _rootScaffoldKey, localDb: widget.localDb, localDatabase: widget.localDatabase),
     );
   }
 }
 
 final _rootScaffoldKey = GlobalKey<_RootScaffoldState>();
 
+enum _LoginGateMode { choose, learner, teacher }
+
 class RootScaffold extends StatefulWidget {
-  const RootScaffold({super.key, required this.localDb});
+  const RootScaffold({super.key, required this.localDb, this.localDatabase});
 
   final Database? localDb;
+  final LocalDatabase? localDatabase;
 
   @override
   State<RootScaffold> createState() => _RootScaffoldState();
@@ -268,30 +289,83 @@ class _RootScaffoldState extends State<RootScaffold> {
   int _index = 0;
   String? _role;
   bool _authReady = false;
+  _LoginGateMode _loginGateMode = _LoginGateMode.choose;
+  /// ログイン直後の「科目が取れるか」検証結果。null=未検証または成功、非null=失敗メッセージ（画面に表示）
+  String? _postLoginSubjectsCheck;
+  bool _teacherTabRoleRetried = false;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  Timer? _debounceTimer;
 
   @override
   void initState() {
     super.initState();
     appAuthNotifier.listen(_onAuthChanged);
     _refreshRole();
+    if (!kIsWeb && SyncEngine.isInitialized) {
+      _connectivitySubscription = Connectivity().onConnectivityChanged.listen((result) {
+        final hasConnection = result.any((r) => r != ConnectivityResult.none);
+        if (hasConnection) {
+          _debounceTimer?.cancel();
+          _debounceTimer = Timer(const Duration(seconds: 3), () {
+            if (SyncEngine.isInitialized && !SyncEngine.instance.isSyncing) {
+              SyncEngine.instance.syncIfOnline();
+            }
+          });
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
     appAuthNotifier.dispose();
+    _connectivitySubscription?.cancel();
+    _debounceTimer?.cancel();
     super.dispose();
   }
 
   void _onAuthChanged() {
+    _teacherTabRoleRetried = false;
+    if (!appAuthNotifier.isLoggedIn) {
+      _loginGateMode = _LoginGateMode.choose;
+      _postLoginSubjectsCheck = null;
+    }
     if (mounted) _refreshRole();
+    // モバイル/デスクトップ: ログイン後に同期を1回走らせ、ローカルに subjects/knowledge を入れる（知識DBタブがローカル参照のため）
+    if (!kIsWeb && SyncEngine.isInitialized && appAuthNotifier.isLoggedIn) {
+      SyncEngine.instance.syncIfOnline();
+    }
   }
 
   Future<void> _refreshRole() async {
     final role = await appAuthNotifier.fetchRole();
+    String? subjectsCheck;
+    if (mounted && appAuthNotifier.isLoggedIn) {
+      try {
+        List<dynamic> rows = await Supabase.instance.client
+            .from('subjects')
+            .select('id')
+            .limit(10);
+        if (rows.isEmpty) {
+          await Future.delayed(const Duration(milliseconds: 500));
+          if (!mounted) return;
+          rows = await Supabase.instance.client
+              .from('subjects')
+              .select('id')
+              .limit(10);
+        }
+        if (rows.isEmpty) {
+          subjectsCheck = '科目が0件です。接続先の Supabase Dashboard で subjects にデータがあるか、RLS を確認してください。';
+        }
+      } catch (e) {
+        subjectsCheck = '科目の取得に失敗しました: $e';
+      }
+    }
     if (mounted) {
       setState(() {
         _role = role;
         _authReady = true;
+        _postLoginSubjectsCheck = subjectsCheck;
       });
     }
   }
@@ -324,9 +398,25 @@ class _RootScaffoldState extends State<RootScaffold> {
       return const TeacherLoginScreen();
     }
     if (_role == 'teacher') {
-      return TeacherAdminPage(localDb: widget.localDb);
+      return TeacherAdminPage(
+        localDb: widget.localDb,
+        localDatabase: widget.localDatabase,
+        onRefreshAuthAndRetry: () async {
+          appAuthNotifier.clearRoleCache();
+          await _refreshRole();
+          if (mounted) setState(() {});
+        },
+      );
     }
-    // 学習者がこのタブを開いた場合
+    // ログイン済みだが teacher ではない（role==null は profiles 未作成 or 取得失敗、role==learner は学習者）
+    if (_role == null && !_teacherTabRoleRetried) {
+      _teacherTabRoleRetried = true;
+      appAuthNotifier.clearRoleCache();
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await _refreshRole();
+        if (mounted) setState(() {});
+      });
+    }
     return Scaffold(
       appBar: AppBar(title: const Text('教材管理')),
       body: Center(
@@ -339,8 +429,25 @@ class _RootScaffoldState extends State<RootScaffold> {
                   size: 48, color: Theme.of(context).colorScheme.outline),
               const SizedBox(height: 16),
               const Text('このタブは教師専用です'),
+              const SizedBox(height: 8),
+              Text(
+                'このアカウントには教材管理の権限がありません。'
+                '権限があるはずの場合は「再読み込み」を試すか、ログアウトして再度ログインしてください。',
+                style: Theme.of(context).textTheme.bodySmall,
+                textAlign: TextAlign.center,
+              ),
               const SizedBox(height: 24),
               FilledButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('再読み込み'),
+                onPressed: () async {
+                  appAuthNotifier.clearRoleCache();
+                  await _refreshRole();
+                  if (mounted) setState(() {});
+                },
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
                 icon: const Icon(Icons.logout),
                 label: const Text('ログアウト'),
                 onPressed: () async {
@@ -356,16 +463,59 @@ class _RootScaffoldState extends State<RootScaffold> {
 
   @override
   Widget build(BuildContext context) {
+    openManageNotifier.openManage = (ctx) => _rootScaffoldKey.currentState?._switchToManageTab(ctx);
+
+    // 未ログイン時はログインゲートのみ。知識DBなどはログイン後のみ表示する。
+    if (!_authReady) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (!appAuthNotifier.isLoggedIn) {
+      return _LoginGateScreen(
+        onShowLearnerLogin: () => setState(() => _loginGateMode = _LoginGateMode.learner),
+        onShowTeacherLogin: () => setState(() => _loginGateMode = _LoginGateMode.teacher),
+        onBack: () => setState(() => _loginGateMode = _LoginGateMode.choose),
+        mode: _loginGateMode,
+      );
+    }
+
     final pages = [
       _buildLearnerTab(),
-      KnowledgeDbHomePage(localDb: widget.localDb),
+      KnowledgeDbHomePage(localDb: widget.localDb, localDatabase: widget.localDatabase),
       _buildTeacherTab(),
     ];
 
-    openManageNotifier.openManage = (ctx) => _rootScaffoldKey.currentState?._switchToManageTab(ctx);
-
     return Scaffold(
-      body: pages[_index],
+      body: Column(
+        children: [
+          if (_postLoginSubjectsCheck != null)
+            Material(
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    children: [
+                      Icon(Icons.warning_amber, color: Theme.of(context).colorScheme.onErrorContainer),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          _postLoginSubjectsCheck!,
+                          style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer, fontSize: 13),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => setState(() => _postLoginSubjectsCheck = null),
+                        child: const Text('閉じる'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          Expanded(child: pages[_index]),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
@@ -391,11 +541,83 @@ class _RootScaffoldState extends State<RootScaffold> {
   }
 }
 
+/// 未ログイン時に表示。学習者/教師のログインを選ばせ、ログイン後にアプリ本体（3タブ）へ。
+class _LoginGateScreen extends StatelessWidget {
+  const _LoginGateScreen({
+    required this.onShowLearnerLogin,
+    required this.onShowTeacherLogin,
+    required this.onBack,
+    required this.mode,
+  });
+
+  final VoidCallback onShowLearnerLogin;
+  final VoidCallback onShowTeacherLogin;
+  final VoidCallback onBack;
+  final _LoginGateMode mode;
+
+  @override
+  Widget build(BuildContext context) {
+    if (mode == _LoginGateMode.learner) {
+      return Scaffold(
+        appBar: AppBar(leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: onBack)),
+        body: const LearnerLoginScreen(),
+      );
+    }
+    if (mode == _LoginGateMode.teacher) {
+      return Scaffold(
+        appBar: AppBar(leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: onBack)),
+        body: const TeacherLoginScreen(),
+      );
+    }
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.school, size: 64, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(height: 24),
+                Text(
+                  'ログインしてください',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 32),
+                FilledButton.icon(
+                  onPressed: onShowLearnerLogin,
+                  icon: const Icon(Icons.school),
+                  label: const Text('学習者でログイン'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 48),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: onShowTeacherLogin,
+                  icon: const Icon(Icons.manage_search),
+                  label: const Text('教師でログイン'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 48),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 起動時初期画面：知識DB の科目一覧（タップでその科目の知識カード一覧へ）
+/// 表示されるのはログイン後のみ（未ログイン時はタブ自体を出さない）。
 class KnowledgeDbHomePage extends StatefulWidget {
-  const KnowledgeDbHomePage({super.key, this.localDb});
+  const KnowledgeDbHomePage({super.key, this.localDb, this.localDatabase});
 
   final Database? localDb;
+  final LocalDatabase? localDatabase;
 
   @override
   State<KnowledgeDbHomePage> createState() => _KnowledgeDbHomePageState();
@@ -409,7 +631,16 @@ class _KnowledgeDbHomePageState extends State<KnowledgeDbHomePage> {
   @override
   void initState() {
     super.initState();
-    _fetchSubjects();
+    // 初回取得は1フレーム遅らせ、ログイン直後のセッション確実反映後に実行する
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _fetchSubjects();
+    });
+    // モバイル/デスクトップ: 同期完了後にローカルが埋まるので1回だけ遅延再取得
+    if (widget.localDatabase != null) {
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) _fetchSubjects();
+      });
+    }
   }
 
   Future<void> _fetchSubjects() async {
@@ -418,11 +649,11 @@ class _KnowledgeDbHomePageState extends State<KnowledgeDbHomePage> {
       _error = null;
     });
     try {
-      final client = Supabase.instance.client;
-      final rows = await client.from('subjects').select().order('display_order');
+      final repo = createSubjectRepository(widget.localDatabase);
+      final rows = await repo.getSubjectsOrderByDisplayOrder();
       if (mounted) {
         setState(() {
-          _subjects = List<Map<String, dynamic>>.from(rows);
+          _subjects = rows;
           _error = null;
         });
       }
@@ -471,29 +702,30 @@ class _KnowledgeDbHomePageState extends State<KnowledgeDbHomePage> {
               : _subjects.isEmpty
                   ? const Center(child: Text('科目がありません'))
                   : ListView.separated(
-                      itemCount: _subjects.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final s = _subjects[index];
-                        final subjectId = s['id'] as String?;
-                        final subjectName = s['name']?.toString() ?? '知識カード';
-                        if (subjectId == null) return const SizedBox.shrink();
-                        return ListTile(
-                          title: Text(subjectName),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (context) => KnowledgeListScreen(
-                                  subjectId: subjectId,
-                                  subjectName: subjectName,
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
+                              itemCount: _subjects.length,
+                              separatorBuilder: (_, __) => const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final s = _subjects[index];
+                                final subjectId = s['id'] as String?;
+                                final subjectName = s['name']?.toString() ?? '知識カード';
+                                if (subjectId == null) return const SizedBox.shrink();
+                                return ListTile(
+                                  title: Text(subjectName),
+                                  trailing: const Icon(Icons.chevron_right),
+                                  onTap: () {
+                                    Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (context) => KnowledgeListScreen(
+                                          subjectId: subjectId,
+                                          subjectName: subjectName,
+                                          localDatabase: widget.localDatabase,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                            ),
     );
   }
 }
@@ -736,9 +968,17 @@ class _LearningSyncPageState extends State<LearningSyncPage> {
 
 /// 教師（管理者）向け管理画面
 class TeacherAdminPage extends StatefulWidget {
-  const TeacherAdminPage({super.key, this.localDb});
+  const TeacherAdminPage({
+    super.key,
+    this.localDb,
+    this.localDatabase,
+    this.onRefreshAuthAndRetry,
+  });
 
   final Database? localDb;
+  final LocalDatabase? localDatabase;
+  /// 権限キャッシュをクリアして親で再取得する。科目が空のときの「データを再取得」で使用。
+  final Future<void> Function()? onRefreshAuthAndRetry;
 
   @override
   State<TeacherAdminPage> createState() => _TeacherAdminPageState();
@@ -752,7 +992,10 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
   @override
   void initState() {
     super.initState();
-    _fetchSubjects();
+    // 初回取得は1フレーム遅らせ、ログイン直後のセッション確実反映後に実行する
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _fetchSubjects();
+    });
   }
 
   Future<void> _fetchSubjects() async {
@@ -782,11 +1025,19 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
     setState(() => _error = null);
     try {
       final client = Supabase.instance.client;
-      await client.from('subjects').select('id').limit(1).maybeSingle();
+      final row = await client.from('subjects').select('id').limit(1).maybeSingle();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('接続成功: Supabase に接続できました。')),
-        );
+        if (row != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('接続成功: Supabase に接続できました。')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('接続できましたが、科目が0件です。RLS・権限または接続先プロジェクトを確認してください。'),
+            ),
+          );
+        }
         await _fetchSubjects();
       }
     } catch (e, stack) {
@@ -949,6 +1200,7 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
           subjects: _subjects,
           title: '知識DB',
           isKnowledge: true,
+          localDatabase: widget.localDatabase,
         ),
       ),
     );
@@ -961,6 +1213,7 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
           subjects: _subjects,
           title: '暗記DB',
           isKnowledge: false,
+          localDatabase: widget.localDatabase,
         ),
       ),
     );
@@ -995,6 +1248,13 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
             tooltip: '科目を追加',
             onPressed: _loading ? null : _showAddSubjectDialog,
           ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'ログアウト',
+            onPressed: () async {
+              await appAuthNotifier.logout();
+            },
+          ),
         ],
       ),
       body: Column(
@@ -1028,21 +1288,68 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
               ),
             ),
           Expanded(
-            child: _subjects.isEmpty && !_loading
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Text('科目がまだありません'),
-                        const SizedBox(height: 16),
-                        FilledButton.icon(
-                          onPressed: _showAddSubjectDialog,
-                          icon: const Icon(Icons.add),
-                          label: const Text('最初の科目を追加'),
+            child: _subjects.isEmpty
+                ? _loading
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const CircularProgressIndicator(),
+                            const SizedBox(height: 16),
+                            Text(
+                              '再取得中...',
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  )
+                      )
+                    : Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text('科目がまだありません'),
+                            const SizedBox(height: 8),
+                            Text(
+                              'ログイン直後や別端末の場合は「データを再取得」を試してください。',
+                              style: Theme.of(context).textTheme.bodySmall,
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 16),
+                            FilledButton.icon(
+                              onPressed: _loading
+                                  ? null
+                                  : () async {
+                                      setState(() {
+                                        _loading = true;
+                                        _error = null;
+                                      });
+                                      try {
+                                        await widget.onRefreshAuthAndRetry?.call();
+                                        if (!mounted) return;
+                                        await _fetchSubjects();
+                                      } catch (e, st) {
+                                        if (mounted) {
+                                          setState(() => _error =
+                                              '再取得でエラー:\n${e.runtimeType}: $e\n\n$st');
+                                        }
+                                      } finally {
+                                        if (mounted) {
+                                          setState(() => _loading = false);
+                                        }
+                                      }
+                                    },
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('データを再取得'),
+                            ),
+                            const SizedBox(height: 12),
+                            FilledButton.icon(
+                              onPressed: _showAddSubjectDialog,
+                              icon: const Icon(Icons.add),
+                              label: const Text('最初の科目を追加'),
+                            ),
+                          ],
+                        ),
+                      )
                 : ListView(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     children: [
@@ -1069,6 +1376,20 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
                         trailing: const Icon(Icons.chevron_right),
                         onTap: _openFourChoice,
                       ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.people_outline),
+                        title: const Text('学習者管理'),
+                        subtitle: const Text('学習者アカウントの追加・削除・パスワードリセット'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => const LearnerManagementScreen(),
+                            ),
+                          );
+                        },
+                      ),
                     ],
                   ),
           ),
@@ -1084,11 +1405,13 @@ class _SubjectPickerPage extends StatelessWidget {
     required this.subjects,
     required this.title,
     required this.isKnowledge,
+    this.localDatabase,
   });
 
   final List<Map<String, dynamic>> subjects;
   final String title;
   final bool isKnowledge;
+  final LocalDatabase? localDatabase;
 
   @override
   Widget build(BuildContext context) {
@@ -1114,6 +1437,7 @@ class _SubjectPickerPage extends StatelessWidget {
                           builder: (context) => KnowledgeListScreen(
                             subjectId: subjectId,
                             subjectName: subjectName,
+                            localDatabase: localDatabase,
                           ),
                         ),
                       );
@@ -1141,10 +1465,12 @@ Future<Database> _initLocalDb() async {
 
   return openDatabase(
     path,
-    version: 2,
+    version: kLocalDbVersion,
     onCreate: (db, version) async {
+      await createLocalSyncTables(db);
+      // 後方互換: step 11 で削除予定の knowledge_local（AssetImport / LearningSyncPage 用）
       await db.execute('''
-        CREATE TABLE knowledge_local (
+        CREATE TABLE IF NOT EXISTS knowledge_local (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           subject TEXT NOT NULL,
           subject_id TEXT,
@@ -1159,10 +1485,8 @@ Future<Database> _initLocalDb() async {
       ''');
     },
     onUpgrade: (db, oldVersion, newVersion) async {
-      if (oldVersion < 2) {
-        await db.execute(
-          'ALTER TABLE knowledge_local ADD COLUMN subject_id TEXT',
-        );
+      if (oldVersion < 3) {
+        await createLocalSyncTables(db);
       }
     },
   );

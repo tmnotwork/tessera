@@ -78,7 +78,16 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
     setState(() => _loadingQuestion = true);
     try {
       final client = Supabase.instance.client;
-      final q = await client.from('questions').select().eq('id', id).maybeSingle();
+      dynamic q;
+      try {
+        q = await client.from('questions').select().eq('id', id).maybeSingle();
+      } on PostgrestException catch (e) {
+        if (e.code == '42703' || (e.message.contains('reference') && e.message.contains('does not exist'))) {
+          q = await client.from('questions').select('id, question_text, explanation, correct_answer, knowledge_id, choices').eq('id', id).maybeSingle();
+        } else {
+          rethrow;
+        }
+      }
       if (q == null || !mounted) return;
 
       final questionText = q['question_text']?.toString() ?? '';
@@ -228,23 +237,43 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
 
       if (_isEditMode) {
         final questionId = widget.questionId!;
-        await client.from('questions').update({
+        final updatePayload = <String, dynamic>{
           'question_text': questionText,
           'correct_answer': correctAnswer,
           'explanation': explanation,
-          'reference': reference,
-        }).eq('id', questionId);
+        };
+        if (reference != null) updatePayload['reference'] = reference;
+        try {
+          await client.from('questions').update(updatePayload).eq('id', questionId);
+        } on PostgrestException catch (e) {
+          if (e.code == '42703' || (e.message.contains('reference') && e.message.contains('does not exist'))) {
+            updatePayload.remove('reference');
+            await client.from('questions').update(updatePayload).eq('id', questionId);
+          } else {
+            rethrow;
+          }
+        }
 
-        await client.from('question_choices').delete().eq('question_id', questionId);
-        for (var i = 0; i < 4; i++) {
-          await client.from('question_choices').insert(
-            QuestionChoice.toPayload(
-              questionId: questionId,
-              position: i + 1,
-              choiceText: choices[i],
-              isCorrect: i == _correctIndex,
-            ),
-          );
+        try {
+          await client.from('question_choices').delete().eq('question_id', questionId);
+          for (var i = 0; i < 4; i++) {
+            await client.from('question_choices').insert(
+              QuestionChoice.toPayload(
+                questionId: questionId,
+                position: i + 1,
+                choiceText: choices[i],
+                isCorrect: i == _correctIndex,
+              ),
+            );
+          }
+        } on PostgrestException catch (e) {
+          if (e.code == 'PGRST205' || e.message.contains('question_choices') || e.message.contains('schema cache')) {
+            await client.from('questions').update({'choices': choices}).eq('id', questionId);
+          } else {
+            rethrow;
+          }
+        } catch (_) {
+          await client.from('questions').update({'choices': choices}).eq('id', questionId);
         }
         try {
           await client.from('question_knowledge').delete().eq('question_id', questionId);
@@ -260,14 +289,25 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
           Navigator.of(context).pop(true);
         }
       } else {
-        final inserted = await client.from('questions').insert({
+        final insertPayload = <String, dynamic>{
           'knowledge_id': knowledgeId,
           'question_type': 'multiple_choice',
           'question_text': questionText,
           'correct_answer': correctAnswer,
           'explanation': explanation,
-          'reference': reference,
-        }).select('id').single();
+        };
+        if (reference != null) insertPayload['reference'] = reference;
+        dynamic inserted;
+        try {
+          inserted = await client.from('questions').insert(insertPayload).select('id').single();
+        } on PostgrestException catch (e) {
+          if (e.code == '42703' || (e.message.contains('reference') && e.message.contains('does not exist'))) {
+            insertPayload.remove('reference');
+            inserted = await client.from('questions').insert(insertPayload).select('id').single();
+          } else {
+            rethrow;
+          }
+        }
 
         final questionId = inserted['id'] as String;
 

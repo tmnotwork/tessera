@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/memorization_card.dart';
+import 'memorization_solve_screen.dart';
 
 /// 指定した科目の暗記カード一覧画面
 class MemorizationListScreen extends StatefulWidget {
@@ -105,6 +106,21 @@ class _MemorizationListScreenState extends State<MemorizationListScreen> {
       appBar: AppBar(
         title: Text(widget.subjectName),
         actions: [
+          if (_items.isNotEmpty)
+            TextButton.icon(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (context) => MemorizationSolveScreen(
+                      cards: _items,
+                      subjectName: widget.subjectName,
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.quiz),
+              label: const Text('出題'),
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _load,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../app_scope.dart';
 
@@ -25,16 +26,33 @@ class _LearnerLoginScreenState extends State<LearnerLoginScreen> {
   Future<void> _login() async {
     final userId = _userIdController.text.trim();
     final password = _passwordController.text;
-    if (userId.isEmpty || password.isEmpty) return;
+    if (userId.isEmpty || password.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ユーザーIDとパスワードを入力してください。')),
+        );
+      }
+      return;
+    }
 
     setState(() => _loading = true);
     try {
       await appAuthNotifier.loginLearner(userId, password);
+    } on AuthException catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('IDまたはパスワードが正しくありません。'),
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('IDまたはパスワードが正しくありません'),
+            content: Text('ログインに失敗しました。接続を確認するか、しばらく経ってからお試しください。'),
+            duration: Duration(seconds: 4),
           ),
         );
       }

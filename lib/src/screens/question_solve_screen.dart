@@ -59,11 +59,24 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
     try {
       final client = Supabase.instance.client;
       final id = widget.questionIds[_index];
-      final row = await client
-          .from('questions')
-          .select('id, knowledge_id, question_type, question_text, correct_answer, explanation, reference, choices, created_at, updated_at')
-          .eq('id', id)
-          .maybeSingle();
+      dynamic row;
+      try {
+        row = await client
+            .from('questions')
+            .select('id, knowledge_id, question_type, question_text, correct_answer, explanation, reference, choices, created_at, updated_at')
+            .eq('id', id)
+            .maybeSingle();
+      } on PostgrestException catch (e) {
+        if (e.code == '42703' || (e.message.contains('reference') && e.message.contains('does not exist'))) {
+          row = await client
+              .from('questions')
+              .select('id, knowledge_id, question_type, question_text, correct_answer, explanation, choices, created_at, updated_at')
+              .eq('id', id)
+              .maybeSingle();
+        } else {
+          rethrow;
+        }
+      }
       if (row == null) {
         setState(() {
           _error = '問題が見つかりません';
@@ -312,7 +325,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                             children: [
                               Text(
                                 '${String.fromCharCode(65 + i)}.',
-                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                                       fontWeight: FontWeight.bold,
                                       color: Theme.of(context).colorScheme.primary,
                                     ),

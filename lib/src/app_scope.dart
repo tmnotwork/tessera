@@ -31,23 +31,53 @@ class AppAuthNotifier {
   }
 
   /// profiles テーブルからロールを取得する（結果はキャッシュ）。
+  /// 行が無い場合は ensure_my_profile() で自動作成してから再取得する。
+  /// 既存ユーザーに教師権限を付けるのはこの RPC であり、「再読み込み」は単にこの処理を再度実行するだけ。
   Future<String?> fetchRole() async {
     if (!isLoggedIn) return null;
     if (_cachedRole != null) return _cachedRole;
     try {
-      final row = await Supabase.instance.client
+      var row = await Supabase.instance.client
           .from('profiles')
           .select('role')
           .eq('id', currentUser!.id)
           .maybeSingle();
+      if (row == null) {
+        await Supabase.instance.client.rpc('ensure_my_profile');
+        row = await Supabase.instance.client
+            .from('profiles')
+            .select('role')
+            .eq('id', currentUser!.id)
+            .maybeSingle();
+      }
       _cachedRole = row?['role'] as String?;
-    } catch (_) {}
+    } catch (e, st) {
+      assert(() {
+        // 開発時のみ: ensure_my_profile 未デプロイ等で RPC が失敗すると role が null のままになる
+        debugPrint('fetchRole/ensure_my_profile failed: $e\n$st');
+        return true;
+      }());
+    }
     return _cachedRole;
   }
 
-  /// 教師：メールアドレスで新規登録（DB トリガーが role=teacher を付与）
-  Future<void> signUpTeacher(String email, String password) async {
-    await Supabase.instance.client.auth.signUp(email: email, password: password);
+  /// 教師：メールアドレスで新規登録（DB トリガーが role=teacher を付与）。
+  /// 戻り値の user.identities が空の場合は既に登録済み。
+  Future<AuthResponse> signUpTeacher(String email, String password) async {
+    return Supabase.instance.client.auth.signUp(email: email, password: password);
+  }
+
+  /// 確認メールを再送（未確認の登録メールアドレス向け）
+  Future<void> resendConfirmationEmail(String email) async {
+    await Supabase.instance.client.auth.resend(
+      type: OtpType.signup,
+      email: email.trim(),
+    );
+  }
+
+  /// 教師：パスワードリセット用メールを送信
+  Future<void> resetPasswordForEmail(String email) async {
+    await Supabase.instance.client.auth.resetPasswordForEmail(email.trim());
   }
 
   /// 教師：メールアドレスでログイン
@@ -64,6 +94,11 @@ class AppAuthNotifier {
 
   Future<void> logout() async {
     await Supabase.instance.client.auth.signOut();
+  }
+
+  /// ロールキャッシュをクリア（再読み込み時に呼ぶ）
+  void clearRoleCache() {
+    _cachedRole = null;
   }
 
   void listen(void Function() fn) => _listener = fn;
