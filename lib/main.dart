@@ -1489,6 +1489,10 @@ Future<Database> _initLocalDb() async {
         await createLocalSyncTables(db);
       }
     },
+    onOpen: (db) async {
+      // sqflite はデフォルトで FK 制約が無効のため明示的に有効化
+      await db.execute('PRAGMA foreign_keys = ON;');
+    },
   );
 }
 

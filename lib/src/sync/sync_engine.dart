@@ -171,7 +171,13 @@ class SyncEngine {
   Future<void> _pullTableFull(SupabaseClient client, String remoteTable, String localTable, List<String> cols) async {
     int offset = 0;
     while (true) {
-      final rows = await client.from(remoteTable).select(cols.join(',')).range(offset, offset + _pageSize - 1);
+      // order を固定することでページング中にレコードが落ちるのを防止
+      final rows = await client
+          .from(remoteTable)
+          .select(cols.join(','))
+          .order('updated_at', ascending: true)
+          .order('id', ascending: true)
+          .range(offset, offset + _pageSize - 1);
       if (rows.isEmpty) break;
       for (final row in rows as List) {
         await _mergeRow(localTable, row as Map<String, dynamic>, remoteTable, fullPull: true);
@@ -188,6 +194,8 @@ class SyncEngine {
           .from(remoteTable)
           .select(cols.join(','))
           .gte('updated_at', lastPullAt)
+          .order('updated_at', ascending: true)
+          .order('id', ascending: true)
           .range(offset, offset + _pageSize - 1);
       if (rows.isEmpty) break;
       for (final row in rows as List) {
@@ -212,8 +220,17 @@ class SyncEngine {
     if (existing['dirty'] == 1) {
       final localUpdated = _parseUtc(existing['updated_at']?.toString());
       final remoteUpdated = _parseUtc(remote['updated_at']?.toString());
-      if (remoteUpdated != null && localUpdated != null && remoteUpdated.isAfter(localUpdated)) {
-        await _updateLocalFromRemote(localTable, remote, remoteTable, existing['local_id'] as int, isDeleted);
+      if (remoteUpdated != null && localUpdated != null) {
+        if (remoteUpdated.isAfter(localUpdated)) {
+          await _updateLocalFromRemote(localTable, remote, remoteTable, existing['local_id'] as int, isDeleted);
+        } else if (remoteUpdated.isAtSameMomentAs(localUpdated)) {
+          // Tiebreaker: supabase_id の辞書順（全デバイスで同一結果になる）
+          final remoteId = _str(remote['id']);
+          final localSupabaseId = existing['supabase_id']?.toString() ?? '';
+          if (remoteId.compareTo(localSupabaseId) > 0) {
+            await _updateLocalFromRemote(localTable, remote, remoteTable, existing['local_id'] as int, isDeleted);
+          }
+        }
       }
       return;
     }
@@ -360,22 +377,49 @@ class SyncEngine {
   }
 
   Future<void> _pullJunctionIncremental(SupabaseClient client, String lastPullAt) async {
-    // 中間テーブルに updated_at が無いため、初回のみフル取得で対応。差分は現フェーズではスキップ（親の Pull で十分な場合が多い）
+    // 中間テーブルには updated_at が無いため、差分取得が不可能。
+    // フル取得を実行するが、重複チェック済みなので繰り返し実行しても安全。
+    await _pullJunctionFullSafe(client);
   }
 
   Future<void> _pullKnowledgeCardTagsFull(SupabaseClient client) async {
-    final rows = await client.from('knowledge_card_tags').select('knowledge_id, tag_id');
+    // knowledge_tags と JOIN して一括取得（N+1 クエリを回避）
+    final rows = await client
+        .from('knowledge_card_tags')
+        .select('knowledge_id, tag_id, knowledge_tags(name)');
     if (rows.isEmpty) return;
     for (final row in rows as List) {
       final r = row as Map<String, dynamic>;
       final knowledgeId = _str(r['knowledge_id']);
       final tagId = _str(r['tag_id']);
-      final tagRow = await client.from('knowledge_tags').select('name').eq('id', tagId).maybeSingle();
-      final tagName = tagRow != null ? _str((tagRow as Map)['name']) : '';
+      final tagData = r['knowledge_tags'] as Map<String, dynamic>?;
+      final tagName = tagData != null ? _str(tagData['name']) : '';
       if (tagName.isEmpty) continue;
-      final localKnowledge = await _localDb.db.query(LocalTable.knowledge, where: 'supabase_id = ?', whereArgs: [knowledgeId]);
+      final localKnowledge = await _localDb.db.query(
+        LocalTable.knowledge,
+        where: 'supabase_id = ?',
+        whereArgs: [knowledgeId],
+      );
       if (localKnowledge.isEmpty) continue;
       final localKnowledgeId = localKnowledge.first['local_id'] as int;
+      // 重複チェック（繰り返し Pull で重複レコードが積み上がるのを防ぐ）
+      final existing = await _localDb.db.query(
+        LocalTable.knowledgeCardTags,
+        where: 'local_knowledge_id = ? AND tag_name = ?',
+        whereArgs: [localKnowledgeId, tagName],
+      );
+      if (existing.isNotEmpty) {
+        // supabase_tag_id が未設定なら補完
+        if (existing.first['supabase_tag_id'] == null) {
+          await _localDb.db.update(
+            LocalTable.knowledgeCardTags,
+            {'supabase_tag_id': tagId, 'synced': 1},
+            where: 'local_id = ?',
+            whereArgs: [existing.first['local_id']],
+          );
+        }
+        continue;
+      }
       await _localDb.db.insert(LocalTable.knowledgeCardTags, {
         'local_knowledge_id': localKnowledgeId,
         'tag_name': tagName,
@@ -386,19 +430,43 @@ class SyncEngine {
   }
 
   Future<void> _pullMemorizationCardTagsFull(SupabaseClient client) async {
-    final rows = await client.from('memorization_card_tags').select('memorization_card_id, tag_id');
+    final rows = await client
+        .from('memorization_card_tags')
+        .select('memorization_card_id, tag_id, memorization_tags(name)');
     if (rows.isEmpty) return;
     for (final row in rows as List) {
       final r = row as Map<String, dynamic>;
       final cardId = _str(r['memorization_card_id']);
       final tagId = _str(r['tag_id']);
-      final tagRow = await client.from('memorization_tags').select('name').eq('id', tagId).maybeSingle();
-      final tagName = tagRow != null ? _str((tagRow as Map)['name']) : '';
+      final tagData = r['memorization_tags'] as Map<String, dynamic>?;
+      final tagName = tagData != null ? _str(tagData['name']) : '';
       if (tagName.isEmpty) continue;
-      final localCards = await _localDb.db.query(LocalTable.memorizationCards, where: 'supabase_id = ?', whereArgs: [cardId]);
+      final localCards = await _localDb.db.query(
+        LocalTable.memorizationCards,
+        where: 'supabase_id = ?',
+        whereArgs: [cardId],
+      );
       if (localCards.isEmpty) continue;
+      final localCardId = localCards.first['local_id'] as int;
+      // 重複チェック
+      final existing = await _localDb.db.query(
+        LocalTable.memorizationCardTags,
+        where: 'local_memorization_card_id = ? AND tag_name = ?',
+        whereArgs: [localCardId, tagName],
+      );
+      if (existing.isNotEmpty) {
+        if (existing.first['supabase_tag_id'] == null) {
+          await _localDb.db.update(
+            LocalTable.memorizationCardTags,
+            {'supabase_tag_id': tagId, 'synced': 1},
+            where: 'local_id = ?',
+            whereArgs: [existing.first['local_id']],
+          );
+        }
+        continue;
+      }
       await _localDb.db.insert(LocalTable.memorizationCardTags, {
-        'local_memorization_card_id': localCards.first['local_id'],
+        'local_memorization_card_id': localCardId,
         'tag_name': tagName,
         'supabase_tag_id': tagId,
         'synced': 1,
@@ -416,9 +484,18 @@ class SyncEngine {
       final qRows = await _localDb.db.query(LocalTable.questions, where: 'supabase_id = ?', whereArgs: [questionId]);
       final kRows = await _localDb.db.query(LocalTable.knowledge, where: 'supabase_id = ?', whereArgs: [knowledgeId]);
       if (qRows.isEmpty || kRows.isEmpty) continue;
+      final questionLocalId = qRows.first['local_id'] as int;
+      final knowledgeLocalId = kRows.first['local_id'] as int;
+      // 重複チェック
+      final existing = await _localDb.db.query(
+        LocalTable.questionKnowledge,
+        where: 'question_local_id = ? AND knowledge_local_id = ?',
+        whereArgs: [questionLocalId, knowledgeLocalId],
+      );
+      if (existing.isNotEmpty) continue;
       await _localDb.db.insert(LocalTable.questionKnowledge, {
-        'question_local_id': qRows.first['local_id'],
-        'knowledge_local_id': kRows.first['local_id'],
+        'question_local_id': questionLocalId,
+        'knowledge_local_id': knowledgeLocalId,
         'synced': 1,
       });
     }
@@ -457,19 +534,40 @@ class SyncEngine {
     String remoteTable,
     Future<void> Function(SupabaseClient, Map<String, dynamic>) pushOne,
   ) async {
+    // 更新系: 1行ずつ個別 try/catch（1行の失敗が全体を止めない）
     final dirty = await _localDb.getDirty(localTable);
     for (final row in dirty) {
-      await pushOne(client, row);
+      try {
+        await pushOne(client, row);
+      } catch (e) {
+        if (kDebugMode) debugPrint('SyncEngine: push failed for $localTable/${row["local_id"]}: $e');
+        // dirty=1 のまま次回同期で再試行
+      }
     }
+
+    // 削除系: Supabase 側への soft delete が確認できた場合のみローカルを物理削除
     final dirtyDeleted = await _localDb.getDirtyDeleted(localTable);
     for (final row in dirtyDeleted) {
       final supabaseId = row['supabase_id'] as String?;
       if (supabaseId != null && supabaseId.isNotEmpty) {
+        // soft delete: 物理 DELETE ではなく deleted_at をセット
         try {
-          await client.from(remoteTable).delete().eq('id', supabaseId);
-        } catch (_) {}
+          await client
+              .from(remoteTable)
+              .update({'deleted_at': LocalDatabase.nowUtc()})
+              .eq('id', supabaseId);
+          // Supabase 側の確認が取れた場合のみローカルも物理削除
+          await _localDb.delete(localTable, where: 'local_id = ?', whereArgs: [row['local_id']]);
+        } catch (e) {
+          if (kDebugMode) {
+            debugPrint('SyncEngine: soft delete failed for $remoteTable/$supabaseId: $e');
+          }
+          // Supabase 削除失敗 → dirty=1, deleted=1 のまま次回リトライ
+        }
+      } else {
+        // supabase_id なし = オフライン中に作成してそのまま削除 → リモートには存在しないのでローカルのみ物理削除
+        await _localDb.delete(localTable, where: 'local_id = ?', whereArgs: [row['local_id']]);
       }
-      await _localDb.delete(localTable, where: 'local_id = ?', whereArgs: [row['local_id']]);
     }
   }
 
@@ -597,7 +695,156 @@ class SyncEngine {
   }
 
   Future<void> _pushTagsAndJunctions(SupabaseClient client) async {
-    // タグマスタと中間テーブルは簡略化: dirty な knowledge に紐づく knowledge_card_tags を Push する場合は、SyncEngine 拡張で対応。現フェーズではエンティティの Push まで。
+    // 1. 知識タグマスタ: supabase_id が null のもの = ローカルで新規作成、未Push
+    final unsyncedKnowledgeTags = await _localDb.db.query(
+      LocalTable.knowledgeTags,
+      where: 'supabase_id IS NULL',
+    );
+    for (final tag in unsyncedKnowledgeTags) {
+      try {
+        // 同名タグが Supabase に既存でも upsert で問題なく取得
+        final result = await client
+            .from('knowledge_tags')
+            .upsert({'name': tag['name']}, onConflict: 'name')
+            .select('id')
+            .single();
+        final id = (result as Map)['id']?.toString();
+        if (id != null) {
+          await _localDb.db.update(
+            LocalTable.knowledgeTags,
+            {'supabase_id': id, 'synced_at': LocalDatabase.nowUtc()},
+            where: 'local_id = ?',
+            whereArgs: [tag['local_id']],
+          );
+          // 中間テーブルの supabase_tag_id も更新
+          await _localDb.db.update(
+            LocalTable.knowledgeCardTags,
+            {'supabase_tag_id': id},
+            where: 'tag_name = ? AND supabase_tag_id IS NULL',
+            whereArgs: [tag['name']],
+          );
+        }
+      } catch (e) {
+        if (kDebugMode) debugPrint('SyncEngine: push knowledge_tag "${tag["name"]}" failed: $e');
+      }
+    }
+
+    // 2. 知識-タグ 中間テーブル: synced=0 のもの
+    final unsyncedKCardTags = await _localDb.db.query(
+      LocalTable.knowledgeCardTags,
+      where: 'synced = ?',
+      whereArgs: [0],
+    );
+    for (final ct in unsyncedKCardTags) {
+      try {
+        final kr = await _localDb.getByLocalId(LocalTable.knowledge, ct['local_knowledge_id'] as int);
+        final knowledgeSupabaseId = kr?['supabase_id'] as String?;
+        final tagSupabaseId = ct['supabase_tag_id'] as String?;
+        if (knowledgeSupabaseId == null || knowledgeSupabaseId.isEmpty) continue;
+        if (tagSupabaseId == null || tagSupabaseId.isEmpty) continue;
+        await client.from('knowledge_card_tags').upsert(
+          {'knowledge_id': knowledgeSupabaseId, 'tag_id': tagSupabaseId},
+          onConflict: 'knowledge_id,tag_id',
+        );
+        await _localDb.db.update(
+          LocalTable.knowledgeCardTags,
+          {'synced': 1},
+          where: 'local_id = ?',
+          whereArgs: [ct['local_id']],
+        );
+      } catch (e) {
+        if (kDebugMode) debugPrint('SyncEngine: push knowledge_card_tag failed: $e');
+      }
+    }
+
+    // 3. 暗記タグマスタ: supabase_id が null のもの
+    final unsyncedMemTags = await _localDb.db.query(
+      LocalTable.memorizationTags,
+      where: 'supabase_id IS NULL',
+    );
+    for (final tag in unsyncedMemTags) {
+      try {
+        final result = await client
+            .from('memorization_tags')
+            .upsert({'name': tag['name']}, onConflict: 'name')
+            .select('id')
+            .single();
+        final id = (result as Map)['id']?.toString();
+        if (id != null) {
+          await _localDb.db.update(
+            LocalTable.memorizationTags,
+            {'supabase_id': id, 'synced_at': LocalDatabase.nowUtc()},
+            where: 'local_id = ?',
+            whereArgs: [tag['local_id']],
+          );
+          await _localDb.db.update(
+            LocalTable.memorizationCardTags,
+            {'supabase_tag_id': id},
+            where: 'tag_name = ? AND supabase_tag_id IS NULL',
+            whereArgs: [tag['name']],
+          );
+        }
+      } catch (e) {
+        if (kDebugMode) debugPrint('SyncEngine: push memorization_tag "${tag["name"]}" failed: $e');
+      }
+    }
+
+    // 4. 暗記カード-タグ 中間テーブル: synced=0 のもの
+    final unsyncedMCardTags = await _localDb.db.query(
+      LocalTable.memorizationCardTags,
+      where: 'synced = ?',
+      whereArgs: [0],
+    );
+    for (final ct in unsyncedMCardTags) {
+      try {
+        final cr = await _localDb.getByLocalId(LocalTable.memorizationCards, ct['local_memorization_card_id'] as int);
+        final cardSupabaseId = cr?['supabase_id'] as String?;
+        final tagSupabaseId = ct['supabase_tag_id'] as String?;
+        if (cardSupabaseId == null || cardSupabaseId.isEmpty) continue;
+        if (tagSupabaseId == null || tagSupabaseId.isEmpty) continue;
+        await client.from('memorization_card_tags').upsert(
+          {'memorization_card_id': cardSupabaseId, 'tag_id': tagSupabaseId},
+          onConflict: 'memorization_card_id,tag_id',
+        );
+        await _localDb.db.update(
+          LocalTable.memorizationCardTags,
+          {'synced': 1},
+          where: 'local_id = ?',
+          whereArgs: [ct['local_id']],
+        );
+      } catch (e) {
+        if (kDebugMode) debugPrint('SyncEngine: push memorization_card_tag failed: $e');
+      }
+    }
+
+    // 5. 問題-知識 中間テーブル: synced=0 のもの
+    final unsyncedQK = await _localDb.db.query(
+      LocalTable.questionKnowledge,
+      where: 'synced = ?',
+      whereArgs: [0],
+    );
+    for (final qk in unsyncedQK) {
+      try {
+        final qr = await _localDb.getByLocalId(LocalTable.questions, qk['question_local_id'] as int);
+        final kr = await _localDb.getByLocalId(LocalTable.knowledge, qk['knowledge_local_id'] as int);
+        final qSupabaseId = qr?['supabase_id'] as String?;
+        final kSupabaseId = kr?['supabase_id'] as String?;
+        if (qSupabaseId == null || qSupabaseId.isEmpty) continue;
+        if (kSupabaseId == null || kSupabaseId.isEmpty) continue;
+        await client.from('question_knowledge').upsert(
+          {'question_id': qSupabaseId, 'knowledge_id': kSupabaseId},
+          onConflict: 'question_id,knowledge_id',
+        );
+        await _localDb.db.update(
+          LocalTable.questionKnowledge,
+          {'synced': 1},
+          where: 'local_id = ?',
+          whereArgs: [qk['local_id']],
+        );
+      } catch (e) {
+        if (kDebugMode) debugPrint('SyncEngine: push question_knowledge failed: $e');
+      }
+    }
   }
 
   static String _str(dynamic v) => v?.toString().trim() ?? '';
