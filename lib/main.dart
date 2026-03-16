@@ -1488,6 +1488,11 @@ Future<Database> _initLocalDb() async {
       if (oldVersion < 3) {
         await createLocalSyncTables(db);
       }
+      if (oldVersion < 4) {
+        await db.execute(
+          'ALTER TABLE local_question_knowledge ADD COLUMN IF NOT EXISTS is_core INTEGER NOT NULL DEFAULT 0',
+        );
+      }
     },
     onOpen: (db) async {
       // sqflite はデフォルトで FK 制約が無効のため明示的に有効化
