@@ -475,12 +475,13 @@ class SyncEngine {
   }
 
   Future<void> _pullQuestionKnowledgeFull(SupabaseClient client) async {
-    final rows = await client.from('question_knowledge').select('question_id, knowledge_id');
+    final rows = await client.from('question_knowledge').select('question_id, knowledge_id, is_core');
     if (rows.isEmpty) return;
     for (final row in rows as List) {
       final r = row as Map<String, dynamic>;
       final questionId = _str(r['question_id']);
       final knowledgeId = _str(r['knowledge_id']);
+      final isCore = (r['is_core'] == true) ? 1 : 0;
       final qRows = await _localDb.db.query(LocalTable.questions, where: 'supabase_id = ?', whereArgs: [questionId]);
       final kRows = await _localDb.db.query(LocalTable.knowledge, where: 'supabase_id = ?', whereArgs: [knowledgeId]);
       if (qRows.isEmpty || kRows.isEmpty) continue;
@@ -492,10 +493,22 @@ class SyncEngine {
         where: 'question_local_id = ? AND knowledge_local_id = ?',
         whereArgs: [questionLocalId, knowledgeLocalId],
       );
-      if (existing.isNotEmpty) continue;
+      if (existing.isNotEmpty) {
+        // is_core が変わっている場合は更新
+        if (existing.first['is_core'] != isCore) {
+          await _localDb.db.update(
+            LocalTable.questionKnowledge,
+            {'is_core': isCore},
+            where: 'local_id = ?',
+            whereArgs: [existing.first['local_id']],
+          );
+        }
+        continue;
+      }
       await _localDb.db.insert(LocalTable.questionKnowledge, {
         'question_local_id': questionLocalId,
         'knowledge_local_id': knowledgeLocalId,
+        'is_core': isCore,
         'synced': 1,
       });
     }
@@ -832,7 +845,7 @@ class SyncEngine {
         if (qSupabaseId == null || qSupabaseId.isEmpty) continue;
         if (kSupabaseId == null || kSupabaseId.isEmpty) continue;
         await client.from('question_knowledge').upsert(
-          {'question_id': qSupabaseId, 'knowledge_id': kSupabaseId},
+          {'question_id': qSupabaseId, 'knowledge_id': kSupabaseId, 'is_core': (qk['is_core'] == 1)},
           onConflict: 'question_id,knowledge_id',
         );
         await _localDb.db.update(

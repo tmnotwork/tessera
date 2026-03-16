@@ -110,11 +110,15 @@ CREATE INDEX IF NOT EXISTS ix_question_choices_question_id ON public.question_ch
 
 -- 問題と関連する知識（多対多）
 CREATE TABLE IF NOT EXISTS public.question_knowledge (
-  question_id UUID NOT NULL REFERENCES public.questions(id) ON DELETE CASCADE,
-  knowledge_id UUID NOT NULL REFERENCES public.knowledge(id) ON DELETE CASCADE,
+  question_id  UUID    NOT NULL REFERENCES public.questions(id) ON DELETE CASCADE,
+  knowledge_id UUID    NOT NULL REFERENCES public.knowledge(id) ON DELETE CASCADE,
+  is_core      BOOLEAN NOT NULL DEFAULT false,
   PRIMARY KEY (question_id, knowledge_id)
 );
 CREATE INDEX IF NOT EXISTS ix_question_knowledge_knowledge_id ON public.question_knowledge(knowledge_id);
+-- is_core: 既存DBへの追加（apply_schema.sql 再実行時用）
+ALTER TABLE public.question_knowledge
+  ADD COLUMN IF NOT EXISTS is_core BOOLEAN NOT NULL DEFAULT false;
 
 -- 既存の knowledge_id を question_knowledge に移行（既存DB用）
 INSERT INTO public.question_knowledge (question_id, knowledge_id)

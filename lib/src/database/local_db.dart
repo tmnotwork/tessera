@@ -1,7 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 /// ローカルDBのバージョン（双方向同期用スキーマ）
-const int kLocalDbVersion = 3;
+const int kLocalDbVersion = 4;
 
 /// 既存の knowledge_local はバージョン2で作成。バージョン3で local_* テーブルを追加。
 Future<void> createLocalSyncTables(Database db) async {
@@ -155,6 +155,7 @@ Future<void> createLocalSyncTables(Database db) async {
       local_id INTEGER PRIMARY KEY AUTOINCREMENT,
       question_local_id INTEGER NOT NULL,
       knowledge_local_id INTEGER NOT NULL,
+      is_core INTEGER NOT NULL DEFAULT 0,
       synced INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (question_local_id) REFERENCES local_questions(local_id),
       FOREIGN KEY (knowledge_local_id) REFERENCES local_knowledge(local_id)
