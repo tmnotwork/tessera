@@ -26,6 +26,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   List<Map<String, dynamic>> _items = [];
   List<Map<String, dynamic>> _knowledgeRows = [];
   bool _loading = true;
+  bool _schemaMissing = false;
   String? _error;
 
   @override
@@ -37,17 +38,10 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   Future<void> _load() async {
     setState(() {
       _loading = true;
+      _schemaMissing = false;
       _error = null;
     });
     try {
-      final examples = await _client
-          .from('english_examples')
-          .select('id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, '
-              'knowledge:knowledge_id(id, content, unit)')
-          .eq('knowledge.subject_id', widget.subjectId)
-          .order('display_order', ascending: true)
-          .order('created_at', ascending: true);
-
       final knowledge = await _client
           .from('knowledge')
           .select('id, content, unit')
@@ -55,9 +49,31 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
           .order('display_order', ascending: true)
           .order('created_at', ascending: true);
 
+      List<Map<String, dynamic>> examples = [];
+      try {
+        final rows = await _client
+            .from('english_examples')
+            .select('id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, '
+                'knowledge:knowledge_id(id, content, unit)')
+            .eq('knowledge.subject_id', widget.subjectId)
+            .order('display_order', ascending: true)
+            .order('created_at', ascending: true);
+        examples = List<Map<String, dynamic>>.from(rows);
+      } on PostgrestException catch (e) {
+        final missingTable = e.code == 'PGRST205' &&
+            e.message.contains("public.english_examples");
+        if (!missingTable) rethrow;
+        if (!mounted) return;
+        setState(() {
+          _schemaMissing = true;
+          _error =
+              '英語例文DBのテーブルが未作成です。Supabase で migration 00016 を適用してください。';
+        });
+      }
+
       if (!mounted) return;
       setState(() {
-        _items = List<Map<String, dynamic>>.from(examples);
+        _items = examples;
         _knowledgeRows = List<Map<String, dynamic>>.from(knowledge);
       });
     } catch (e) {
@@ -250,6 +266,18 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       messenger.showSnackBar(
         SnackBar(content: Text(current == null ? '追加しました' : '保存しました')),
       );
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+      final missingTable = e.code == 'PGRST205' && e.message.contains("public.english_examples");
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            missingTable
+                ? '英語例文DBのテーブルが未作成です。migration 00016 を適用してください。'
+                : '保存に失敗しました: $e',
+          ),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
@@ -285,6 +313,18 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       await _load();
       messenger.showSnackBar(
         const SnackBar(content: Text('削除しました')),
+      );
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+      final missingTable = e.code == 'PGRST205' && e.message.contains("public.english_examples");
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            missingTable
+                ? '英語例文DBのテーブルが未作成です。migration 00016 を適用してください。'
+                : '削除に失敗しました: $e',
+          ),
+        ),
       );
     } catch (e) {
       if (!mounted) return;
@@ -333,7 +373,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       floatingActionButton: widget.isLearnerMode
           ? null
           : FloatingActionButton.extended(
-              onPressed: _loading ? null : () => _openEditor(),
+              onPressed: _loading || _schemaMissing ? null : () => _openEditor(),
               icon: const Icon(Icons.add),
               label: const Text('追加'),
             ),

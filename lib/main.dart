@@ -1522,9 +1522,13 @@ Future<Database> _initLocalDb() async {
         await createLocalSyncTables(db);
       }
       if (oldVersion < 4) {
-        await db.execute(
-          'ALTER TABLE local_question_knowledge ADD COLUMN IF NOT EXISTS is_core INTEGER NOT NULL DEFAULT 0',
-        );
+        final cols = await db.rawQuery("PRAGMA table_info('local_question_knowledge')");
+        final hasIsCore = cols.any((c) => c['name']?.toString() == 'is_core');
+        if (!hasIsCore) {
+          await db.execute(
+            'ALTER TABLE local_question_knowledge ADD COLUMN is_core INTEGER NOT NULL DEFAULT 0',
+          );
+        }
       }
     },
     onOpen: (db) async {
