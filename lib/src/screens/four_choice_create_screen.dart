@@ -24,6 +24,8 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
   final _referenceController = TextEditingController();
 
   int _correctIndex = 0;
+  /// コア問題フラグ（true = 習得判定に含める必須問題、false = 追加演習用）
+  bool _isCore = true;
   List<Map<String, dynamic>> _subjects = [];
   List<Map<String, dynamic>> _knowledgeList = [];
   String? _selectedSubjectId;
@@ -153,15 +155,18 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
       });
 
       String? knowledgeId = q['knowledge_id']?.toString();
-      if (knowledgeId == null || knowledgeId.isEmpty) {
-        try {
-          final juncList = await client.from('question_knowledge').select('knowledge_id').eq('question_id', id).limit(1);
-          final list = juncList as List;
-          if (list.isNotEmpty && list.first is Map<String, dynamic>) {
-            knowledgeId = (list.first as Map<String, dynamic>)['knowledge_id']?.toString();
+      bool isCore = true;
+      try {
+        final juncList = await client.from('question_knowledge').select('knowledge_id, is_core').eq('question_id', id).limit(1);
+        final list = juncList as List;
+        if (list.isNotEmpty && list.first is Map<String, dynamic>) {
+          final first = list.first as Map<String, dynamic>;
+          if (knowledgeId == null || knowledgeId.isEmpty) {
+            knowledgeId = first['knowledge_id']?.toString();
           }
-        } catch (_) {}
-      }
+          isCore = first['is_core'] == true;
+        }
+      } catch (_) {}
 
       if (mounted && knowledgeId != null && knowledgeId.isNotEmpty) {
         final k = await client.from('knowledge').select('subject_id').eq('id', knowledgeId).maybeSingle();
@@ -170,9 +175,12 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
           setState(() {
             _selectedSubjectId = sid;
             _selectedKnowledgeId = knowledgeId;
+            _isCore = isCore;
           });
           await _loadKnowledge();
         }
+      } else if (mounted) {
+        setState(() => _isCore = isCore);
       }
     } catch (_) {
       if (mounted) setState(() => _loadingQuestion = false);
@@ -280,6 +288,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
           await client.from('question_knowledge').insert({
             'question_id': questionId,
             'knowledge_id': knowledgeId,
+            'is_core': _isCore,
           });
         } catch (_) {}
         if (mounted) {
@@ -330,6 +339,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
           await client.from('question_knowledge').insert({
             'question_id': questionId,
             'knowledge_id': knowledgeId,
+            'is_core': _isCore,
           });
         } catch (_) {}
 
@@ -480,6 +490,13 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
                 return DropdownMenuItem(value: id, child: Text(content, overflow: TextOverflow.ellipsis));
               }).toList(),
               onChanged: _loadingKnowledge ? null : (v) => setState(() => _selectedKnowledgeId = v),
+            ),
+            const SizedBox(height: 16),
+            SwitchListTile(
+              title: const Text('コア問題'),
+              subtitle: const Text('オン: 習得判定に含める必須問題／オフ: 追加演習用'),
+              value: _isCore,
+              onChanged: (v) => setState(() => _isCore = v),
             ),
             const SizedBox(height: 32),
             FilledButton.icon(
