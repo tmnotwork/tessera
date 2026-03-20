@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../app_scope.dart';
+import '../teacher_signup_gate.dart';
 
 class TeacherLoginScreen extends StatefulWidget {
   const TeacherLoginScreen({super.key});
@@ -260,7 +261,7 @@ class _TeacherLoginScreenState extends State<TeacherLoginScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('パスワードは${_minPasswordLength}文字以上で入力してください。'),
+            content: Text('パスワードは$_minPasswordLength文字以上で入力してください。'),
             duration: const Duration(seconds: 4),
           ),
         );
@@ -295,6 +296,15 @@ class _TeacherLoginScreenState extends State<TeacherLoginScreen>
           ),
         );
         _tabController.animateTo(0);
+      }
+    } on TeacherSignupBlocked catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message),
+            duration: const Duration(seconds: 6),
+          ),
+        );
       }
     } on AuthException catch (e) {
       if (mounted) {
@@ -339,6 +349,16 @@ class _TeacherLoginScreenState extends State<TeacherLoginScreen>
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 8),
+              if (!isLogin && TeacherSignupGate.isRestricted) ...[
+                Text(
+                  '新規の教師アカウントは次のメールドメインのみ登録できます: '
+                  '${TeacherSignupGate.allowedDomains.map((d) => '@$d').join(', ')}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        height: 1.35,
+                      ),
+                ),
+                const SizedBox(height: 16),
+              ],
               TextField(
                 controller: _emailController,
                 decoration: const InputDecoration(

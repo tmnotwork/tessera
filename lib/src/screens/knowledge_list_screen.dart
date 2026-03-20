@@ -153,6 +153,7 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
                   allKnowledge: _items,
                   initialIndex: newIndex,
                   initialEditing: true,
+                  isLearnerMode: widget.isLearnerMode,
                 ),
               ),
             );
@@ -182,6 +183,7 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
                   allKnowledge: _items,
                   initialIndex: newIndex,
                   initialEditing: true,
+                  isLearnerMode: widget.isLearnerMode,
                 ),
               ),
             );
@@ -205,6 +207,7 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
           allKnowledge: _items,
           initialIndex: index,
           initialEditing: widget.isLearnerMode ? false : isDesktop,
+          isLearnerMode: widget.isLearnerMode,
         ),
       ),
     );

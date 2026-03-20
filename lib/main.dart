@@ -20,6 +20,7 @@ import 'src/repositories/subject_repository.dart';
 import 'src/sync/sync_engine.dart';
 import 'src/screens/four_choice_list_screen.dart';
 import 'src/screens/knowledge_list_screen.dart';
+import 'src/screens/english_example_list_screen.dart';
 import 'src/screens/learner_home_screen.dart';
 import 'src/screens/learner_login_screen.dart';
 import 'src/screens/memorization_list_screen.dart';
@@ -703,7 +704,7 @@ class _KnowledgeDbHomePageState extends State<KnowledgeDbHomePage> {
                   ? const Center(child: Text('科目がありません'))
                   : ListView.separated(
                               itemCount: _subjects.length,
-                              separatorBuilder: (_, __) => const Divider(height: 1),
+                              separatorBuilder: (context, index) => const Divider(height: 1),
                               itemBuilder: (context, index) {
                                 final s = _subjects[index];
                                 final subjectId = s['id'] as String?;
@@ -1199,7 +1200,7 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
         builder: (context) => _SubjectPickerPage(
           subjects: _subjects,
           title: '知識DB',
-          isKnowledge: true,
+          dbType: _TeacherDbType.knowledge,
           localDatabase: widget.localDatabase,
         ),
       ),
@@ -1212,7 +1213,20 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
         builder: (context) => _SubjectPickerPage(
           subjects: _subjects,
           title: '暗記DB',
-          isKnowledge: false,
+          dbType: _TeacherDbType.memorization,
+          localDatabase: widget.localDatabase,
+        ),
+      ),
+    );
+  }
+
+  void _openEnglishExampleDb() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => _SubjectPickerPage(
+          subjects: _subjects,
+          title: '英語例文DB',
+          dbType: _TeacherDbType.englishExamples,
           localDatabase: widget.localDatabase,
         ),
       ),
@@ -1370,6 +1384,14 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
                       ),
                       const Divider(height: 1),
                       ListTile(
+                        leading: const Icon(Icons.translate),
+                        title: const Text('英語例文DB'),
+                        subtitle: const Text('表=日本語、裏=英語、解説・補足を管理'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: _openEnglishExampleDb,
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
                         leading: const Icon(Icons.quiz_outlined),
                         title: const Text('四択問題'),
                         subtitle: const Text('四択問題の作成・一覧'),
@@ -1400,17 +1422,19 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
 }
 
 /// 知識DB / 暗記DB 用の科目選択ページ
+enum _TeacherDbType { knowledge, memorization, englishExamples }
+
 class _SubjectPickerPage extends StatelessWidget {
   const _SubjectPickerPage({
     required this.subjects,
     required this.title,
-    required this.isKnowledge,
+    required this.dbType,
     this.localDatabase,
   });
 
   final List<Map<String, dynamic>> subjects;
   final String title;
-  final bool isKnowledge;
+  final _TeacherDbType dbType;
   final LocalDatabase? localDatabase;
 
   @override
@@ -1421,17 +1445,17 @@ class _SubjectPickerPage extends StatelessWidget {
           ? const Center(child: Text('科目がありません'))
           : ListView.separated(
               itemCount: subjects.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
+              separatorBuilder: (context, index) => const Divider(height: 1),
               itemBuilder: (context, index) {
                 final s = subjects[index];
                 final subjectId = s['id'] as String?;
-                final subjectName = s['name']?.toString() ?? (isKnowledge ? '知識カード' : '暗記カード');
+                final subjectName = s['name']?.toString() ?? '科目';
                 if (subjectId == null) return const SizedBox.shrink();
                 return ListTile(
                   title: Text(subjectName),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () {
-                    if (isKnowledge) {
+                    if (dbType == _TeacherDbType.knowledge) {
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (context) => KnowledgeListScreen(
@@ -1441,10 +1465,19 @@ class _SubjectPickerPage extends StatelessWidget {
                           ),
                         ),
                       );
-                    } else {
+                    } else if (dbType == _TeacherDbType.memorization) {
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (context) => MemorizationListScreen(
+                            subjectId: subjectId,
+                            subjectName: subjectName,
+                          ),
+                        ),
+                      );
+                    } else {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => EnglishExampleListScreen(
                             subjectId: subjectId,
                             subjectName: subjectName,
                           ),

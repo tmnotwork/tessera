@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'teacher_signup_gate.dart';
+
 /// 教材管理画面へ遷移するコールバックを保持。
 /// main の RootScaffold が build 時に set し、QuestionSolveScreen の編集ボタン等が呼び出す。
 final openManageNotifier = _OpenManageNotifier();
@@ -63,7 +65,11 @@ class AppAuthNotifier {
 
   /// 教師：メールアドレスで新規登録（DB トリガーが role=teacher を付与）。
   /// 戻り値の user.identities が空の場合は既に登録済み。
+  ///
+  /// [TeacherSignupBlocked] … `TEACHER_SIGNUP_ALLOWED_DOMAINS` 指定時に許可外メール。
   Future<AuthResponse> signUpTeacher(String email, String password) async {
+    final blocked = TeacherSignupGate.rejectionMessageIfAny(email);
+    if (blocked != null) throw TeacherSignupBlocked(blocked);
     return Supabase.instance.client.auth.signUp(email: email, password: password);
   }
 

@@ -2,6 +2,10 @@
 
 Flutter 学習プラットフォームアプリ（Supabase 連携）。
 
+## 教師アカウントを増やす
+
+手順と本番向けドメイン制限は [docs/教師アカウントの追加.md](docs/教師アカウントの追加.md) を参照。
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.

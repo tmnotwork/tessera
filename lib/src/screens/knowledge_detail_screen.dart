@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../models/english_example.dart';
 import '../models/knowledge.dart';
 import '../utils/platform_utils.dart';
 import '../widgets/edit_intents.dart';
 import '../widgets/explanation_text.dart';
+import 'english_example_solve_screen.dart';
 import 'knowledge_edit_screen.dart';
 import 'question_solve_screen.dart';
 
@@ -20,11 +22,14 @@ class KnowledgeDetailScreen extends StatefulWidget {
     required this.allKnowledge,
     required this.initialIndex,
     this.initialEditing = false,
+    this.isLearnerMode = false,
   });
 
   final List<Knowledge> allKnowledge;
   final int initialIndex;
   final bool initialEditing;
+  /// 学習者向け：編集不可・執筆者コメント非表示・英語例文ブロック表示
+  final bool isLearnerMode;
 
   @override
   State<KnowledgeDetailScreen> createState() => _KnowledgeDetailScreenState();
@@ -59,6 +64,10 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
 
   /// 各知識に紐づく問題ID（knowledgeId -> [questionId, ...]）
   final Map<String, List<String>> _linkedQuestions = {};
+  /// 問題がコアかどうか（questionId -> isCore）。question_knowledge の is_core を反映
+  final Map<String, bool> _questionIsCore = {};
+  /// 学習者向け：knowledge_id -> 英語例文（1件まで）
+  final Map<String, EnglishExample> _englishByKnowledgeId = {};
 
   @override
   void initState() {
@@ -69,6 +78,31 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
     _isEditing = isDesktop && widget.initialEditing;
     _initControllersFromCurrent();
     _loadLinkedQuestions();
+    _loadEnglishExamplesForLearner();
+  }
+
+  Future<void> _loadEnglishExamplesForLearner() async {
+    if (!widget.isLearnerMode || _allKnowledge.isEmpty) return;
+    try {
+      final client = Supabase.instance.client;
+      final knowledgeIds = _allKnowledge.map((k) => k.id).toList();
+      final rows = await client
+          .from('english_examples')
+          .select('id, knowledge_id, front_ja, back_en, explanation, supplement')
+          .inFilter('knowledge_id', knowledgeIds);
+      final map = <String, EnglishExample>{};
+      for (final row in rows as List) {
+        final r = row as Map<String, dynamic>;
+        final ex = EnglishExample.fromRow(r);
+        map[ex.knowledgeId] = ex;
+      }
+      if (!mounted) return;
+      setState(() {
+        _englishByKnowledgeId
+          ..clear()
+          ..addAll(map);
+      });
+    } catch (_) {}
   }
 
   /// 知識に紐づく問題を取得（四択・テキスト入力など全形式）
@@ -80,6 +114,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
       final knowledgeIds = _allKnowledge.map((k) => k.id).toList();
       final normalizedToOriginal = <String, String>{};
       final byKnowledge = <String, List<String>>{};
+      final isCoreMap = <String, bool>{};
       for (final k in _allKnowledge) {
         byKnowledge[k.id] = [];
         normalizedToOriginal[k.id.toString().trim().toLowerCase()] = k.id;
@@ -98,7 +133,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
         }
       } catch (_) {}
       try {
-        final junc = await client.from('question_knowledge').select('question_id, knowledge_id').inFilter('knowledge_id', knowledgeIds);
+        final junc = await client.from('question_knowledge').select('question_id, knowledge_id, is_core').inFilter('knowledge_id', knowledgeIds);
         for (final row in junc as List) {
           final r = row as Map<String, dynamic>;
           final qId = r['question_id']?.toString();
@@ -107,6 +142,9 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
           final kId = kIdNorm != null ? normalizedToOriginal[kIdNorm] : null;
           if (qId != null && kId != null && !byKnowledge[kId]!.contains(qId)) {
             byKnowledge[kId]!.add(qId);
+          }
+          if (qId != null) {
+            isCoreMap[qId] = r['is_core'] == true;
           }
         }
       } catch (_) {}
@@ -127,6 +165,8 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
       setState(() {
         _linkedQuestions.clear();
         _linkedQuestions.addAll(byKnowledge);
+        _questionIsCore.clear();
+        _questionIsCore.addAll(isCoreMap);
       });
     } catch (_) {}
   }
@@ -316,7 +356,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
               },
               tooltip: '次のカード',
             ),
-          if (!_isEditing)
+          if (!_isEditing && !widget.isLearnerMode)
             IconButton(
               icon: const Icon(Icons.edit),
               onPressed: _saving
@@ -646,10 +686,81 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
     );
   }
 
+  Widget _buildEnglishExampleSection(BuildContext context, Knowledge knowledge) {
+    final ex = _englishByKnowledgeId[knowledge.id];
+    if (ex == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 24),
+      child: Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.translate, size: 20, color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    '英語例文',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                ex.frontJa,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyLarge,
+              ),
+              const SizedBox(height: 12),
+              FilledButton.tonalIcon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (context) => EnglishExampleSolveScreen(
+                        examples: [ex],
+                        subjectName: knowledge.title,
+                      ),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.play_circle_outline),
+                label: const Text('例文で練習'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildPracticeLink(BuildContext context, Knowledge knowledge) {
     final ids = _linkedQuestions[knowledge.id];
     if (ids == null || ids.isEmpty) return const SizedBox.shrink();
     final count = ids.length;
+    // コア問題を先に並べる（習得判定に含める問題を優先表示）
+    final coreIds = ids.where((id) => _questionIsCore[id] != false).toList();
+    final suppIds = ids.where((id) => _questionIsCore[id] == false).toList();
+    final orderedIds = [...coreIds, ...suppIds];
+    final coreCount = coreIds.length;
+    final suppCount = suppIds.length;
+    String label;
+    if (count == 1) {
+      label = coreCount == 1 ? '問題を解く（コア）' : '問題を解く（追加）';
+    } else if (suppCount == 0) {
+      label = '問題を解く（$count 問・コア）';
+    } else if (coreCount == 0) {
+      label = '問題を解く（$count 問・追加）';
+    } else {
+      label = '問題を解く（コア$coreCount・追加$suppCount）';
+    }
     return Padding(
       padding: const EdgeInsets.only(top: 24),
       child: OutlinedButton.icon(
@@ -657,14 +768,15 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
           Navigator.of(context).push(
             MaterialPageRoute(
               builder: (context) => QuestionSolveScreen(
-                questionIds: ids,
+                questionIds: orderedIds,
                 knowledgeTitle: knowledge.title,
+                isLearnerMode: widget.isLearnerMode,
               ),
             ),
           );
         },
         icon: const Icon(Icons.quiz_outlined),
-        label: Text(count == 1 ? '問題を解く' : '問題を解く（$count 問）'),
+        label: Text(label),
         style: OutlinedButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
         ),
@@ -728,7 +840,9 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               ExplanationText(text: explanation),
-                              if (authorComment.isNotEmpty) ...[
+                              if (widget.isLearnerMode)
+                                _buildEnglishExampleSection(context, knowledge),
+                              if (!widget.isLearnerMode && authorComment.isNotEmpty) ...[
                                 const SizedBox(height: 24),
                                 Container(
                                   width: double.infinity,

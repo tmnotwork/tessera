@@ -13,10 +13,13 @@ class QuestionSolveScreen extends StatefulWidget {
     super.key,
     required this.questionIds,
     required this.knowledgeTitle,
+    this.isLearnerMode = false,
   });
 
   final List<String> questionIds;
   final String knowledgeTitle;
+  /// true のとき、紐づく知識を開く画面も学習者向け（編集不可・例文表示）
+  final bool isLearnerMode;
 
   @override
   State<QuestionSolveScreen> createState() => _QuestionSolveScreenState();
@@ -255,6 +258,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                               allKnowledge: _linkedKnowledge,
                               initialIndex: idx,
                               initialEditing: false,
+                              isLearnerMode: widget.isLearnerMode,
                             ),
                           ),
                         );

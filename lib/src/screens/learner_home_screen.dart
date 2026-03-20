@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../app_scope.dart';
+import 'english_example_list_screen.dart';
 import 'knowledge_list_screen.dart';
 import 'memorization_list_screen.dart';
 import 'question_solve_screen.dart';
@@ -81,6 +82,18 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
           subjects: _subjects,
           title: '暗記カード',
           mode: _LearnerPickMode.memorization,
+        ),
+      ),
+    );
+  }
+
+  void _openEnglishExamplePicker() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => _LearnerSubjectPicker(
+          subjects: _subjects,
+          title: '英語例文',
+          mode: _LearnerPickMode.englishExamples,
         ),
       ),
     );
@@ -166,13 +179,20 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
                       subtitle: '表・裏の暗記カードで覚える',
                       onTap: _openMemorizationPicker,
                     ),
+                    const SizedBox(height: 12),
+                    _MenuCard(
+                      icon: Icons.translate,
+                      title: '英語例文',
+                      subtitle: '日本語から英語を思い出す（解説・補足付き）',
+                      onTap: _openEnglishExamplePicker,
+                    ),
                   ],
                 ),
     );
   }
 }
 
-enum _LearnerPickMode { knowledge, memorization }
+enum _LearnerPickMode { knowledge, memorization, englishExamples }
 
 class _LearnerSubjectPicker extends StatelessWidget {
   const _LearnerSubjectPicker({
@@ -193,7 +213,7 @@ class _LearnerSubjectPicker extends StatelessWidget {
           ? const Center(child: Text('科目がありません'))
           : ListView.separated(
               itemCount: subjects.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
+              separatorBuilder: (context, index) => const Divider(height: 1),
               itemBuilder: (context, index) {
                 final s = subjects[index];
                 final subjectId = s['id'] as String?;
@@ -213,12 +233,22 @@ class _LearnerSubjectPicker extends StatelessWidget {
                           ),
                         ),
                       );
-                    } else {
+                    } else if (mode == _LearnerPickMode.memorization) {
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (context) => MemorizationListScreen(
                             subjectId: subjectId,
                             subjectName: subjectName,
+                          ),
+                        ),
+                      );
+                    } else {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => EnglishExampleListScreen(
+                            subjectId: subjectId,
+                            subjectName: subjectName,
+                            isLearnerMode: true,
                           ),
                         ),
                       );
@@ -286,6 +316,7 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
         builder: (context) => QuestionSolveScreen(
           questionIds: _questionIds,
           knowledgeTitle: '四択問題',
+          isLearnerMode: true,
         ),
       ),
     );
