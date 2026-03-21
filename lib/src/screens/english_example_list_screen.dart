@@ -2,8 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/english_example.dart';
+import '../supabase/english_example_learning_state_remote.dart';
 import '../sync/ensure_synced_for_local_read.dart';
 import 'english_example_solve_screen.dart';
+
+/// 出題モードの種類
+enum _StudyFilter {
+  dueToday, // 今日が復習日のものだけ
+  all,       // 全件
+}
 
 class EnglishExampleListScreen extends StatefulWidget {
   const EnglishExampleListScreen({
@@ -15,6 +22,7 @@ class EnglishExampleListScreen extends StatefulWidget {
 
   final String? subjectId;
   final String? subjectName;
+
   /// true: 閲覧・出題のみ（教師向けの追加・編集は不可）
   final bool isLearnerMode;
 
@@ -24,17 +32,30 @@ class EnglishExampleListScreen extends StatefulWidget {
 
 class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   final _client = Supabase.instance.client;
+
   List<Map<String, dynamic>> _items = [];
   List<Map<String, dynamic>> _knowledgeRows = [];
+
+  /// example_id → 学習状態（learner のみ）
+  Map<String, Map<String, dynamic>> _learningStates = {};
+
   bool _loading = true;
   bool _schemaMissing = false;
   String? _error;
+
+  _StudyFilter _studyFilter = _StudyFilter.dueToday;
+
+  String? get _learnerId => _client.auth.currentUser?.id;
 
   @override
   void initState() {
     super.initState();
     _load();
   }
+
+  // ──────────────────────────────
+  // データ取得
+  // ──────────────────────────────
 
   Future<void> _load() async {
     setState(() {
@@ -45,6 +66,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
     try {
       await ensureSyncedForLocalRead();
       if (!mounted) return;
+
       final knowledge = widget.subjectId == null
           ? await _client
               .from('knowledge')
@@ -76,21 +98,33 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
                 .order('created_at', ascending: true);
         examples = List<Map<String, dynamic>>.from(rows);
       } on PostgrestException catch (e) {
-        final missingTable = e.code == 'PGRST205' &&
-            e.message.contains("public.english_examples");
+        final missingTable =
+            e.code == 'PGRST205' && e.message.contains('public.english_examples');
         if (!missingTable) rethrow;
         if (!mounted) return;
         setState(() {
           _schemaMissing = true;
-          _error =
-              '英語例文DBのテーブルが未作成です。Supabase で migration 00016 を適用してください。';
+          _error = '英語例文DBのテーブルが未作成です。Supabase で migration 00016 を適用してください。';
         });
+        return;
+      }
+
+      // 学習者モードのみ SM-2 状態を取得
+      Map<String, Map<String, dynamic>> states = {};
+      if (widget.isLearnerMode && _learnerId != null && examples.isNotEmpty) {
+        final ids = examples.map((e) => e['id'] as String).toList();
+        states = await EnglishExampleLearningStateRemote.fetchStates(
+          client: _client,
+          learnerId: _learnerId!,
+          exampleIds: ids,
+        );
       }
 
       if (!mounted) return;
       setState(() {
         _items = examples;
         _knowledgeRows = List<Map<String, dynamic>>.from(knowledge);
+        _learningStates = states;
       });
     } catch (e) {
       if (!mounted) return;
@@ -99,6 +133,57 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       if (mounted) setState(() => _loading = false);
     }
   }
+
+  // ──────────────────────────────
+  // フィルタリング
+  // ──────────────────────────────
+
+  /// 表示対象の例文リスト（フィルター適用後）
+  List<Map<String, dynamic>> get _filteredItems {
+    if (!widget.isLearnerMode || _studyFilter == _StudyFilter.all) {
+      return _items;
+    }
+    // 今日の復習: next_review_at が今日以前 or 未学習
+    final todayEnd = DateTime.now().add(const Duration(days: 1));
+    return _items.where((item) {
+      final state = _learningStates[item['id'] as String?];
+      if (state == null) return true; // 未学習は常に出題
+      final nextReviewStr = state['next_review_at'] as String?;
+      if (nextReviewStr == null) return true;
+      final nextReview = DateTime.tryParse(nextReviewStr);
+      if (nextReview == null) return true;
+      return nextReview.isBefore(todayEnd);
+    }).toList();
+  }
+
+  // ──────────────────────────────
+  // 出題開始
+  // ──────────────────────────────
+
+  void _startSolve(List<Map<String, dynamic>> targetItems) {
+    final examples =
+        targetItems.map((e) => EnglishExample.fromRow(Map<String, dynamic>.from(e))).toList();
+
+    final initialStates = <String, Map<String, dynamic>>{};
+    for (final ex in examples) {
+      final s = _learningStates[ex.id];
+      if (s != null) initialStates[ex.id] = s;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => EnglishExampleSolveScreen(
+          examples: examples,
+          subjectName: widget.subjectName,
+          initialStates: initialStates,
+        ),
+      ),
+    ).then((_) => _load()); // 戻ったら状態を再読込
+  }
+
+  // ──────────────────────────────
+  // 教師向け編集・削除
+  // ──────────────────────────────
 
   String _knowledgeLabel(Map<String, dynamic> row) {
     final unit = row['unit']?.toString();
@@ -130,11 +215,16 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       return;
     }
 
-    final frontController = TextEditingController(text: current?['front_ja']?.toString() ?? '');
-    final backController = TextEditingController(text: current?['back_en']?.toString() ?? '');
-    final explanationController = TextEditingController(text: current?['explanation']?.toString() ?? '');
-    final supplementController = TextEditingController(text: current?['supplement']?.toString() ?? '');
-    final orderController = TextEditingController(text: current?['display_order']?.toString() ?? '');
+    final frontController =
+        TextEditingController(text: current?['front_ja']?.toString() ?? '');
+    final backController =
+        TextEditingController(text: current?['back_en']?.toString() ?? '');
+    final explanationController =
+        TextEditingController(text: current?['explanation']?.toString() ?? '');
+    final supplementController =
+        TextEditingController(text: current?['supplement']?.toString() ?? '');
+    final orderController =
+        TextEditingController(text: current?['display_order']?.toString() ?? '');
     String? selectedKnowledgeId = current?['knowledge_id']?.toString() ??
         (candidates.isNotEmpty ? candidates.first['id']?.toString() : null);
 
@@ -170,7 +260,8 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
                               ),
                             )
                             .toList(),
-                        onChanged: (v) => setLocalState(() => selectedKnowledgeId = v),
+                        onChanged: (v) =>
+                            setLocalState(() => selectedKnowledgeId = v),
                       ),
                       const SizedBox(height: 12),
                       TextField(
@@ -275,7 +366,10 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       if (current == null) {
         await _client.from('english_examples').insert(payload);
       } else {
-        await _client.from('english_examples').update(payload).eq('id', current['id']);
+        await _client
+            .from('english_examples')
+            .update(payload)
+            .eq('id', current['id']);
       }
       if (!mounted) return;
       await _load();
@@ -284,7 +378,8 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       );
     } on PostgrestException catch (e) {
       if (!mounted) return;
-      final missingTable = e.code == 'PGRST205' && e.message.contains("public.english_examples");
+      final missingTable =
+          e.code == 'PGRST205' && e.message.contains('public.english_examples');
       messenger.showSnackBar(
         SnackBar(
           content: Text(
@@ -296,9 +391,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text('保存に失敗しました: $e')),
-      );
+      messenger.showSnackBar(SnackBar(content: Text('保存に失敗しました: $e')));
     }
   }
 
@@ -327,12 +420,11 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       await _client.from('english_examples').delete().eq('id', row['id']);
       if (!mounted) return;
       await _load();
-      messenger.showSnackBar(
-        const SnackBar(content: Text('削除しました')),
-      );
+      messenger.showSnackBar(const SnackBar(content: Text('削除しました')));
     } on PostgrestException catch (e) {
       if (!mounted) return;
-      final missingTable = e.code == 'PGRST205' && e.message.contains("public.english_examples");
+      final missingTable =
+          e.code == 'PGRST205' && e.message.contains('public.english_examples');
       messenger.showSnackBar(
         SnackBar(
           content: Text(
@@ -344,44 +436,43 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text('削除に失敗しました: $e')),
-      );
+      messenger.showSnackBar(SnackBar(content: Text('削除に失敗しました: $e')));
     }
   }
 
-  List<EnglishExample> get _examplesAsModels =>
-      _items.map((e) => EnglishExample.fromRow(Map<String, dynamic>.from(e))).toList();
+  // ──────────────────────────────
+  // Build
+  // ──────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final baseTitle = widget.subjectName == null || widget.subjectName!.isEmpty
         ? '英語例文'
         : '${widget.subjectName} · 英語例文';
-    final title = widget.isLearnerMode
-        ? baseTitle
-        : '$baseTitle DB';
+    final title = widget.isLearnerMode ? baseTitle : '$baseTitle DB';
+
+    final filtered = _filteredItems;
+    final dueCount = widget.isLearnerMode ? _filteredItemsCount(_StudyFilter.dueToday) : 0;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(title),
         actions: [
-          if (widget.isLearnerMode && _items.isNotEmpty)
-            TextButton.icon(
-              onPressed: _loading
-                  ? null
-                  : () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (context) => EnglishExampleSolveScreen(
-                            examples: _examplesAsModels,
-                            subjectName: widget.subjectName,
-                          ),
-                        ),
-                      );
-                    },
-              icon: const Icon(Icons.quiz),
-              label: const Text('出題'),
+          if (widget.isLearnerMode && _items.isNotEmpty) ...[
+            // フィルター切り替えボタン
+            _FilterToggleButton(
+              current: _studyFilter,
+              dueCount: dueCount,
+              onChanged: (f) => setState(() => _studyFilter = f),
             ),
+            // 出題ボタン
+            if (filtered.isNotEmpty)
+              TextButton.icon(
+                onPressed: _loading ? null : () => _startSolve(filtered),
+                icon: const Icon(Icons.quiz),
+                label: Text('出題 (${filtered.length})'),
+              ),
+          ],
           IconButton(
             onPressed: _loading ? null : _load,
             icon: const Icon(Icons.refresh),
@@ -405,7 +496,8 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text('読み込みに失敗しました\n$_error', textAlign: TextAlign.center),
+                        Text('読み込みに失敗しました\n$_error',
+                            textAlign: TextAlign.center),
                         const SizedBox(height: 12),
                         FilledButton.icon(
                           onPressed: _load,
@@ -416,60 +508,138 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
                     ),
                   ),
                 )
-              : _items.isEmpty
-                  ? const Center(child: Text('この科目の例文はまだありません'))
+              : filtered.isEmpty
+                  ? _buildEmpty()
                   : ListView.separated(
-                      itemCount: _items.length,
-                      separatorBuilder: (context, index) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final item = _items[index];
-                        final knowledge = item['knowledge'] as Map<String, dynamic>?;
-                        final knowledgeTitle = knowledge?['content']?.toString();
-                        final frontJa = item['front_ja']?.toString() ?? '';
-                        final backEn = item['back_en']?.toString() ?? '';
-                        return ListTile(
-                          title: Text(
-                            frontJa,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: Text(
-                            [
-                              if (!widget.isLearnerMode && backEn.isNotEmpty) backEn,
-                              if ((knowledgeTitle ?? '').isNotEmpty) '知識: $knowledgeTitle',
-                            ].join('\n'),
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          trailing: widget.isLearnerMode
-                              ? const Icon(Icons.chevron_right)
-                              : PopupMenuButton<String>(
-                                  onSelected: (v) {
-                                    if (v == 'edit') _openEditor(current: item);
-                                    if (v == 'delete') _delete(item);
-                                  },
-                                  itemBuilder: (context) => const [
-                                    PopupMenuItem(value: 'edit', child: Text('編集')),
-                                    PopupMenuItem(value: 'delete', child: Text('削除')),
-                                  ],
-                                ),
-                          onTap: () {
-                            if (widget.isLearnerMode) {
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (context) => EnglishExampleSolveScreen(
-                                    examples: [EnglishExample.fromRow(Map<String, dynamic>.from(item))],
-                                    subjectName: widget.subjectName,
-                                  ),
-                                ),
-                              );
-                            } else {
-                              _openEditor(current: item);
-                            }
-                          },
-                        );
-                      },
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) =>
+                          _buildListItem(context, filtered[index]),
                     ),
+    );
+  }
+
+  int _filteredItemsCount(_StudyFilter filter) {
+    if (filter == _StudyFilter.all) return _items.length;
+    final todayEnd = DateTime.now().add(const Duration(days: 1));
+    return _items.where((item) {
+      final state = _learningStates[item['id'] as String?];
+      if (state == null) return true;
+      final nextReviewStr = state['next_review_at'] as String?;
+      if (nextReviewStr == null) return true;
+      final nextReview = DateTime.tryParse(nextReviewStr);
+      if (nextReview == null) return true;
+      return nextReview.isBefore(todayEnd);
+    }).length;
+  }
+
+  Widget _buildEmpty() {
+    if (widget.isLearnerMode && _studyFilter == _StudyFilter.dueToday && _items.isNotEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.check_circle_outline, size: 64, color: Colors.green),
+            const SizedBox(height: 16),
+            const Text('今日の復習はすべて完了しました！', style: TextStyle(fontSize: 16)),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () => setState(() => _studyFilter = _StudyFilter.all),
+              child: const Text('全件を表示する'),
+            ),
+          ],
+        ),
+      );
+    }
+    return const Center(child: Text('この科目の例文はまだありません'));
+  }
+
+  Widget _buildListItem(BuildContext context, Map<String, dynamic> item) {
+    final knowledge = item['knowledge'] as Map<String, dynamic>?;
+    final knowledgeTitle = knowledge?['content']?.toString();
+    final frontJa = item['front_ja']?.toString() ?? '';
+    final backEn = item['back_en']?.toString() ?? '';
+    final exampleId = item['id'] as String?;
+    final state = exampleId != null ? _learningStates[exampleId] : null;
+
+    return ListTile(
+      title: Text(frontJa, maxLines: 2, overflow: TextOverflow.ellipsis),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!widget.isLearnerMode && backEn.isNotEmpty)
+            Text(backEn, maxLines: 1, overflow: TextOverflow.ellipsis),
+          if ((knowledgeTitle ?? '').isNotEmpty)
+            Text('知識: $knowledgeTitle', maxLines: 1, overflow: TextOverflow.ellipsis),
+          if (widget.isLearnerMode && state != null)
+            _buildStateLine(state),
+        ],
+      ),
+      isThreeLine: widget.isLearnerMode && state != null,
+      trailing: widget.isLearnerMode
+          ? const Icon(Icons.chevron_right)
+          : PopupMenuButton<String>(
+              onSelected: (v) {
+                if (v == 'edit') _openEditor(current: item);
+                if (v == 'delete') _delete(item);
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(value: 'edit', child: Text('編集')),
+                PopupMenuItem(value: 'delete', child: Text('削除')),
+              ],
+            ),
+      onTap: () {
+        if (widget.isLearnerMode) {
+          _startSolve([item]);
+        } else {
+          _openEditor(current: item);
+        }
+      },
+    );
+  }
+
+  /// リスト行の学習状況テキスト
+  Widget _buildStateLine(Map<String, dynamic> state) {
+    final rep = (state['repetitions'] as int?) ?? 0;
+    final nextReviewStr = state['next_review_at'] as String?;
+    String nextLabel = '未設定';
+    if (nextReviewStr != null) {
+      final dt = DateTime.tryParse(nextReviewStr)?.toLocal();
+      if (dt != null) {
+        final diff = dt.difference(DateTime.now()).inDays;
+        nextLabel = diff <= 0 ? '今日' : '$diff日後';
+      }
+    }
+    return Text(
+      '連続正解 $rep 回 · 次回 $nextLabel',
+      style: const TextStyle(fontSize: 11, color: Colors.grey),
+    );
+  }
+}
+
+// ──────────────────────────────────────────────
+// フィルタートグルボタン
+// ──────────────────────────────────────────────
+
+class _FilterToggleButton extends StatelessWidget {
+  const _FilterToggleButton({
+    required this.current,
+    required this.dueCount,
+    required this.onChanged,
+  });
+
+  final _StudyFilter current;
+  final int dueCount;
+  final ValueChanged<_StudyFilter> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDue = current == _StudyFilter.dueToday;
+    return TextButton.icon(
+      onPressed: () =>
+          onChanged(isDue ? _StudyFilter.all : _StudyFilter.dueToday),
+      icon: Icon(isDue ? Icons.today : Icons.list),
+      label: Text(isDue ? '今日($dueCount)' : '全件'),
     );
   }
 }
