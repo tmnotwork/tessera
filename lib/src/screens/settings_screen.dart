@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_scope.dart';
+import 'tts_setting_screen.dart';
 
 /// アプリ設定画面（ダークモードなど）
 class SettingsScreen extends StatelessWidget {
@@ -40,6 +41,31 @@ class SettingsScreen extends StatelessWidget {
                       : 'システムに従う',
             ),
             onTap: () => _showThemeModePicker(context),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 24, 16, 8),
+            child: Text(
+              '読み上げ',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          ListTile(
+            leading: Icon(
+              Icons.volume_up,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            title: const Text('読み上げ設定'),
+            subtitle: const Text('速度・繰り返し・ランダムなど'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (context) => const TtsSettingScreen(),
+              ),
+            ),
           ),
         ],
       ),
