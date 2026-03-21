@@ -37,6 +37,9 @@ ALTER TABLE public.knowledge
 ALTER TABLE public.knowledge
   ALTER COLUMN subject DROP NOT NULL;
 
+ALTER TABLE public.knowledge
+  ADD COLUMN IF NOT EXISTS dev_completed BOOLEAN NOT NULL DEFAULT false;
+
 -- 知識カード用タグ（RDB・中間テーブル）
 CREATE TABLE IF NOT EXISTS public.knowledge_tags (
   id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -95,6 +98,9 @@ CREATE TABLE IF NOT EXISTS public.questions (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.questions
+  ADD COLUMN IF NOT EXISTS dev_completed BOOLEAN NOT NULL DEFAULT false;
 
 -- 四択の選択肢（1問4行）
 CREATE TABLE IF NOT EXISTS public.question_choices (

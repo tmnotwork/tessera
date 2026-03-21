@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/memorization_card.dart';
+import '../sync/ensure_synced_for_local_read.dart';
 import 'memorization_solve_screen.dart';
 
 /// 指定した科目の暗記カード一覧画面
@@ -36,6 +37,8 @@ class _MemorizationListScreenState extends State<MemorizationListScreen> {
       _error = null;
     });
     try {
+      await ensureSyncedForLocalRead();
+      if (!mounted) return;
       final client = Supabase.instance.client;
       final rows = await client
           .from('memorization_cards')

@@ -3,6 +3,7 @@ import 'package:postgrest/postgrest.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../database/local_database.dart';
+import '../supabase/question_learning_state_remote.dart';
 import 'sync_metadata_store.dart';
 import 'sync_notifier.dart';
 
@@ -30,22 +31,182 @@ class SyncEngine {
   bool _syncing = false;
   bool get isSyncing => _syncing;
 
+  /// 進行中の [sync]（画面からの同時 await 用に共有）
+  Future<void>? _inFlightSync;
+
   /// オンラインなら同期を実行。オフラインなら何もしない。
+  ///
+  /// 注意: [sync] 内部で例外は握りつぶして [SyncNotifier.setError] するため、
+  /// 成否は `SyncNotifier.instance.state` / `lastError` で確認すること。
   Future<void> syncIfOnline() async {
     if (kIsWeb) return;
     try {
-      // connectivity 未導入時は常に試行（失敗すれば is_syncing を戻す）
       await sync();
-    } catch (_) {
-      // ネット不可など
+      if (kDebugMode && SyncNotifier.instance.state == SyncState.error) {
+        debugPrint(
+          'SyncEngine.syncIfOnline: 同期処理は終了しましたがエラーです: ${SyncNotifier.instance.lastError}',
+        );
+      }
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('SyncEngine.syncIfOnline: 予期しない例外 $e\n$st');
+      }
     }
   }
 
-  /// 同期実行: 1) Pull 2) Push。完了時に SyncNotifier に通知。
-  Future<void> sync() async {
-    if (kIsWeb) return;
-    if (_syncing) return;
+  /// 学習者の四択解答をローカルに記録し、同期キューへ積む。
+  Future<bool> recordQuestionLearningProgress({
+    required String learnerId,
+    required String questionSupabaseId,
+    required int selectedIndex,
+    required String selectedChoiceText,
+    required bool isCorrect,
+  }) async {
+    if (kIsWeb) return false;
 
+    final q = await _localDb.getBySupabaseId(LocalTable.questions, questionSupabaseId);
+    final questionLocalId = q?['local_id'] as int?;
+    if (questionLocalId == null) return false;
+
+    final now = DateTime.now().toUtc();
+    final nowIso = now.toIso8601String();
+
+    await _localDb.insertWithSync(LocalTable.questionAnswerLogs, {
+      'learner_id': learnerId,
+      'question_local_id': questionLocalId,
+      'selected_choice_text': selectedChoiceText,
+      'selected_index': selectedIndex,
+      'is_correct': isCorrect ? 1 : 0,
+      'answered_at': nowIso,
+    });
+
+    final existing = await _localDb.db.query(
+      LocalTable.questionLearningStates,
+      where: 'learner_id = ? AND question_local_id = ?',
+      whereArgs: [learnerId, questionLocalId],
+      limit: 1,
+    );
+
+    final prev = existing.isNotEmpty ? existing.first : null;
+    final prevStability = (prev?['stability'] as num?)?.toDouble() ?? 1.0;
+    final prevStreak = (prev?['success_streak'] as num?)?.toInt() ?? 0;
+    final prevLapse = (prev?['lapse_count'] as num?)?.toInt() ?? 0;
+    final prevReviewed = (prev?['reviewed_count'] as num?)?.toInt() ?? 0;
+
+    late final int successStreak;
+    late final int lapseCount;
+    late final double stability;
+    late final DateTime nextReviewAt;
+    late final double retrievability;
+
+    if (isCorrect) {
+      // 初回正解は「既に知っている」とみなし、忘却曲線の対象外にする
+      final isFirstCorrect = prevReviewed == 0;
+      successStreak = prevStreak + 1;
+      lapseCount = prevLapse;
+      if (isFirstCorrect) {
+        stability = 3650.0;
+        nextReviewAt = now.add(const Duration(days: 3650));
+        retrievability = 1.0;
+      } else {
+        stability = (prevStability * 1.25 + 0.5).clamp(1.0, 120.0).toDouble();
+        final intervalDays = (stability * (1.0 + successStreak * 0.35)).clamp(1.0, 60.0);
+        nextReviewAt = now.add(Duration(minutes: (intervalDays * 24 * 60).round()));
+        retrievability = 0.9;
+      }
+    } else {
+      successStreak = 0;
+      lapseCount = prevLapse + 1;
+      stability = (prevStability * 0.65).clamp(0.5, 60.0).toDouble();
+      final reviewHours = lapseCount <= 1 ? 6 : 12;
+      nextReviewAt = now.add(Duration(hours: reviewHours));
+      retrievability = 0.35;
+    }
+
+    final payload = <String, dynamic>{
+      'stability': stability,
+      'difficulty': isCorrect ? 0.45 : 0.7,
+      'retrievability': retrievability,
+      'success_streak': successStreak,
+      'lapse_count': lapseCount,
+      'reviewed_count': prevReviewed + 1,
+      'last_is_correct': isCorrect ? 1 : 0,
+      'last_selected_choice_text': selectedChoiceText,
+      'last_selected_index': selectedIndex,
+      'last_review_at': nowIso,
+      'next_review_at': nextReviewAt.toUtc().toIso8601String(),
+    };
+    if (prev == null) {
+      await _localDb.insertWithSync(LocalTable.questionLearningStates, {
+        'learner_id': learnerId,
+        'question_local_id': questionLocalId,
+        'question_supabase_id': questionSupabaseId,
+        ...payload,
+      });
+    } else {
+      await _localDb.updateWithSync(
+        LocalTable.questionLearningStates,
+        {
+          'question_supabase_id': questionSupabaseId,
+          ...payload,
+        },
+        where: 'local_id = ?',
+        whereArgs: [prev['local_id']],
+      );
+    }
+
+    // 全同期（Pull→Push）はここでは走らせない。画面側で Supabase へ直接反映し、
+    // ensureSyncedForLocalRead などでまとめて Pull/Push する（Pull が直後に古い行で上書きする競合を避ける）。
+    return true;
+  }
+
+  /// 直近のローカル `question_learning_states` を Supabase upsert 用の Map にする。
+  /// リモート側の二重カウントを避け、タイル表示とローカルを一致させる。
+  Future<Map<String, dynamic>?> buildQuestionLearningStateSupabaseUpsert({
+    required String learnerId,
+    required String questionSupabaseId,
+  }) async {
+    if (kIsWeb) return null;
+    final q = await _localDb.getBySupabaseId(LocalTable.questions, questionSupabaseId);
+    final questionLocalId = q?['local_id'] as int?;
+    if (questionLocalId == null) return null;
+    final rows = await _localDb.db.query(
+      LocalTable.questionLearningStates,
+      where: 'learner_id = ? AND question_local_id = ?',
+      whereArgs: [learnerId, questionLocalId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final r = rows.first;
+    return {
+      'learner_id': learnerId,
+      'question_id': questionSupabaseId,
+      'stability': r['stability'],
+      'difficulty': r['difficulty'],
+      'retrievability': r['retrievability'],
+      'success_streak': r['success_streak'],
+      'lapse_count': r['lapse_count'],
+      'reviewed_count': r['reviewed_count'],
+      'last_is_correct': (r['last_is_correct'] == 1),
+      'last_selected_choice_text': r['last_selected_choice_text'],
+      'last_selected_index': r['last_selected_index'],
+      'last_review_at': r['last_review_at'],
+      'next_review_at': r['next_review_at'],
+      'updated_at': LocalDatabase.nowUtc(),
+    };
+  }
+
+  /// 同期実行: 1) Pull 2) Push。完了時に SyncNotifier に通知。
+  /// 並行呼び出しは同一処理の終了を待ち合わせる。
+  Future<void> sync() {
+    if (kIsWeb) return Future.value();
+    _inFlightSync ??= _runSync().whenComplete(() {
+      _inFlightSync = null;
+    });
+    return _inFlightSync!;
+  }
+
+  Future<void> _runSync() async {
     final client = Supabase.instance.client;
     _syncing = true;
     SyncNotifier.setSyncing();
@@ -64,7 +225,12 @@ class SyncEngine {
           await _pullIncremental(client, lastPullAt);
         }
       } on PostgrestException catch (e) {
-        final isMissingColumn = e.code == '42703' || (e.message.contains('does not exist') && e.message.contains('deleted_at'));
+        // deleted_at / updated_at 未追加のリモート（00014 未適用など）
+        final isMissingColumn = e.code == '42703' ||
+            (e.message.contains('does not exist') &&
+                (e.message.contains('deleted_at') ||
+                    e.message.contains('updated_at') ||
+                    e.message.contains('dev_completed')));
         if (isMissingColumn && !_useLegacyCols) {
           _useLegacyCols = true;
           if (lastPullAt == null || lastPullAt.isEmpty) {
@@ -119,6 +285,8 @@ class SyncEngine {
     await _pullTableFullSafe(client, 'question_choices', LocalTable.questionChoices, _effectiveQuestionChoiceCols);
     await _pullTableFullSafe(client, 'knowledge_tags', LocalTable.knowledgeTags, _knowledgeTagCols);
     await _pullTableFullSafe(client, 'memorization_tags', LocalTable.memorizationTags, _memorizationTagCols);
+    await _pullTableFullSafe(client, 'question_answer_logs', LocalTable.questionAnswerLogs, _questionAnswerLogCols);
+    await _pullTableFullSafe(client, 'question_learning_states', LocalTable.questionLearningStates, _questionLearningStateCols);
     await _pullJunctionFullSafe(client);
   }
 
@@ -143,19 +311,86 @@ class SyncEngine {
     await _pullTableIncrementalSafe(client, 'question_choices', LocalTable.questionChoices, _effectiveQuestionChoiceCols, lastPullAt);
     await _pullTableIncrementalSafe(client, 'knowledge_tags', LocalTable.knowledgeTags, _knowledgeTagCols, lastPullAt);
     await _pullTableIncrementalSafe(client, 'memorization_tags', LocalTable.memorizationTags, _memorizationTagCols, lastPullAt);
+    await _pullTableIncrementalSafe(client, 'question_answer_logs', LocalTable.questionAnswerLogs, _questionAnswerLogCols, lastPullAt);
+    await _pullTableIncrementalSafe(client, 'question_learning_states', LocalTable.questionLearningStates, _questionLearningStateCols, lastPullAt);
     await _pullJunctionIncremental(client, lastPullAt);
   }
 
   static const _subjectCols = ['id', 'name', 'display_order', 'created_at', 'updated_at', 'deleted_at'];
-  static const _knowledgeCols = ['id', 'subject_id', 'subject', 'unit', 'content', 'description', 'display_order', 'created_at', 'updated_at', 'deleted_at'];
+  static const _knowledgeCols = [
+    'id',
+    'subject_id',
+    'subject',
+    'unit',
+    'content',
+    'description',
+    'display_order',
+    'construction',
+    'author_comment',
+    'dev_completed',
+    'created_at',
+    'updated_at',
+    'deleted_at',
+  ];
   static const _memorizationCardCols = ['id', 'subject_id', 'knowledge_id', 'unit', 'front_content', 'back_content', 'display_order', 'created_at', 'updated_at', 'deleted_at'];
-  static const _questionCols = ['id', 'knowledge_id', 'question_type', 'question_text', 'correct_answer', 'explanation', 'reference', 'choices', 'created_at', 'updated_at', 'deleted_at'];
-  static const _questionChoiceCols = ['id', 'question_id', 'position', 'choice_text', 'is_correct', 'created_at', 'deleted_at'];
+  static const _questionCols = [
+    'id',
+    'knowledge_id',
+    'question_type',
+    'question_text',
+    'correct_answer',
+    'explanation',
+    'reference',
+    'choices',
+    'dev_completed',
+    'created_at',
+    'updated_at',
+    'deleted_at',
+  ];
+  /// 00014 適用後は updated_at あり。未適用時は legacy 列セットで Pull し、カーソルは created_at。
+  static const _questionChoiceCols = [
+    'id',
+    'question_id',
+    'position',
+    'choice_text',
+    'is_correct',
+    'created_at',
+    'updated_at',
+    'deleted_at',
+  ];
+  static const _questionAnswerLogCols = ['id', 'learner_id', 'question_id', 'selected_choice_text', 'selected_index', 'is_correct', 'answered_at', 'created_at', 'updated_at'];
+  static const _questionLearningStateCols = ['id', 'learner_id', 'question_id', 'stability', 'difficulty', 'retrievability', 'success_streak', 'lapse_count', 'reviewed_count', 'last_is_correct', 'last_selected_choice_text', 'last_selected_index', 'last_review_at', 'next_review_at', 'created_at', 'updated_at'];
   /// deleted_at 未追加のリモート用（マイグレーション 00014_add_deleted_at_for_sync 未適用時）
   static const _subjectColsLegacy = ['id', 'name', 'display_order', 'created_at', 'updated_at'];
-  static const _knowledgeColsLegacy = ['id', 'subject_id', 'subject', 'unit', 'content', 'description', 'display_order', 'created_at', 'updated_at'];
+  /// deleted_at 無しリモート用。dev_completed 等を含めないと Pull マージで常に false/0 に上書きされる。
+  static const _knowledgeColsLegacy = [
+    'id',
+    'subject_id',
+    'subject',
+    'unit',
+    'content',
+    'description',
+    'display_order',
+    'construction',
+    'author_comment',
+    'dev_completed',
+    'created_at',
+    'updated_at',
+  ];
   static const _memorizationCardColsLegacy = ['id', 'subject_id', 'knowledge_id', 'unit', 'front_content', 'back_content', 'display_order', 'created_at', 'updated_at'];
-  static const _questionColsLegacy = ['id', 'knowledge_id', 'question_type', 'question_text', 'correct_answer', 'explanation', 'reference', 'choices', 'created_at', 'updated_at'];
+  static const _questionColsLegacy = [
+    'id',
+    'knowledge_id',
+    'question_type',
+    'question_text',
+    'correct_answer',
+    'explanation',
+    'reference',
+    'choices',
+    'dev_completed',
+    'created_at',
+    'updated_at',
+  ];
   static const _questionChoiceColsLegacy = ['id', 'question_id', 'position', 'choice_text', 'is_correct', 'created_at'];
   static const _knowledgeTagCols = ['id', 'name', 'created_at'];
   static const _memorizationTagCols = ['id', 'name', 'created_at'];
@@ -168,19 +403,26 @@ class SyncEngine {
   List<String> get _effectiveQuestionCols => _useLegacyCols ? _questionColsLegacy : _questionCols;
   List<String> get _effectiveQuestionChoiceCols => _useLegacyCols ? _questionChoiceColsLegacy : _questionChoiceCols;
 
+  /// Pull の並び・増分フィルタに使う時刻列（リモートに `updated_at` が無いテーブルは `created_at`）。
+  String _pullTimeColumn(List<String> cols) {
+    if (cols.contains('updated_at')) return 'updated_at';
+    return 'created_at';
+  }
+
   Future<void> _pullTableFull(SupabaseClient client, String remoteTable, String localTable, List<String> cols) async {
+    final timeCol = _pullTimeColumn(cols);
     int offset = 0;
     while (true) {
       // order を固定することでページング中にレコードが落ちるのを防止
       final rows = await client
           .from(remoteTable)
           .select(cols.join(','))
-          .order('updated_at', ascending: true)
+          .order(timeCol, ascending: true)
           .order('id', ascending: true)
           .range(offset, offset + _pageSize - 1);
       if (rows.isEmpty) break;
       for (final row in rows as List) {
-        await _mergeRow(localTable, row as Map<String, dynamic>, remoteTable, fullPull: true);
+        await _mergeRow(client, localTable, row as Map<String, dynamic>, remoteTable, fullPull: true);
       }
       offset += _pageSize;
       if ((rows as List).length < _pageSize) break;
@@ -188,33 +430,84 @@ class SyncEngine {
   }
 
   Future<void> _pullTableIncremental(SupabaseClient client, String remoteTable, String localTable, List<String> cols, String lastPullAt) async {
+    final timeCol = _pullTimeColumn(cols);
     int offset = 0;
     while (true) {
       final rows = await client
           .from(remoteTable)
           .select(cols.join(','))
-          .gte('updated_at', lastPullAt)
-          .order('updated_at', ascending: true)
+          .gte(timeCol, lastPullAt)
+          .order(timeCol, ascending: true)
           .order('id', ascending: true)
           .range(offset, offset + _pageSize - 1);
       if (rows.isEmpty) break;
       for (final row in rows as List) {
-        await _mergeRow(localTable, row as Map<String, dynamic>, remoteTable, fullPull: false);
+        await _mergeRow(client, localTable, row as Map<String, dynamic>, remoteTable, fullPull: false);
       }
       offset += _pageSize;
       if ((rows as List).length < _pageSize) break;
     }
   }
 
-  Future<void> _mergeRow(String localTable, Map<String, dynamic> remote, String remoteTable, {required bool fullPull}) async {
+  /// 増分 Pull などで `local_questions` にまだ無いとき、リモートから1件取り込む（学習状態・選択肢の FK 用）。
+  Future<Map<String, dynamic>?> _ensureQuestionInLocalDb(SupabaseClient client, String questionSupabaseId) async {
+    if (questionSupabaseId.isEmpty) return null;
+    final existing = await _localDb.getBySupabaseId(LocalTable.questions, questionSupabaseId);
+    if (existing != null) return existing;
+    try {
+      final raw = await client
+          .from('questions')
+          .select(_effectiveQuestionCols.join(','))
+          .eq('id', questionSupabaseId)
+          .maybeSingle();
+      if (raw == null) {
+        if (kDebugMode) {
+          debugPrint('SyncEngine: question $questionSupabaseId not found on remote (skip dependent row)');
+        }
+        return null;
+      }
+      final row = Map<String, dynamic>.from(raw);
+      await _mergeRow(client, LocalTable.questions, row, 'questions', fullPull: true);
+      return await _localDb.getBySupabaseId(LocalTable.questions, questionSupabaseId);
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('SyncEngine: _ensureQuestionInLocalDb($questionSupabaseId) failed: $e\n$st');
+      }
+      return null;
+    }
+  }
+
+  /// 端末で先に解答済み（supabase_id 未確定）の行と、Pull のリモート行が同一 (learner, question) でぶつかるのを防ぐ。
+  Future<Map<String, dynamic>?> _localQuestionLearningStateByLearnerAndQuestion(
+    Map<String, dynamic> remote,
+  ) async {
+    final learnerId = _str(remote['learner_id']);
+    final questionSupabaseId = _str(remote['question_id']);
+    if (learnerId.isEmpty || questionSupabaseId.isEmpty) return null;
+    final q = await _localDb.getBySupabaseId(LocalTable.questions, questionSupabaseId);
+    final qLocalId = q?['local_id'] as int?;
+    if (qLocalId == null) return null;
+    final rows = await _localDb.db.query(
+      LocalTable.questionLearningStates,
+      where: 'learner_id = ? AND question_local_id = ?',
+      whereArgs: [learnerId, qLocalId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<void> _mergeRow(SupabaseClient client, String localTable, Map<String, dynamic> remote, String remoteTable, {required bool fullPull}) async {
     final supabaseId = _str(remote['id']);
     if (supabaseId.isEmpty) return;
     final deletedAt = remote['deleted_at'];
     final isDeleted = deletedAt != null && deletedAt.toString().isNotEmpty;
 
-    final existing = await _localDb.getBySupabaseId(localTable, supabaseId);
+    var existing = await _localDb.getBySupabaseId(localTable, supabaseId);
+    if (existing == null && localTable == LocalTable.questionLearningStates && remoteTable == 'question_learning_states') {
+      existing = await _localQuestionLearningStateByLearnerAndQuestion(remote);
+    }
     if (existing == null) {
-      await _insertRemoteRow(localTable, remote, remoteTable, isDeleted);
+      await _insertRemoteRow(client, localTable, remote, remoteTable, isDeleted);
       return;
     }
     if (existing['dirty'] == 1) {
@@ -237,7 +530,7 @@ class SyncEngine {
     await _updateLocalFromRemote(localTable, remote, remoteTable, existing['local_id'] as int, isDeleted);
   }
 
-  Future<void> _insertRemoteRow(String localTable, Map<String, dynamic> remote, String remoteTable, bool isDeleted) async {
+  Future<void> _insertRemoteRow(SupabaseClient client, String localTable, Map<String, dynamic> remote, String remoteTable, bool isDeleted) async {
     final now = LocalDatabase.nowUtc();
     final row = _remoteToLocalRow(remote, remoteTable);
     row['supabase_id'] = _str(remote['id']);
@@ -271,16 +564,41 @@ class SyncEngine {
       }
     } else if (localTable == LocalTable.questionChoices) {
       final questionSupabaseId = _str(remote['question_id']);
-      if (questionSupabaseId.isNotEmpty) {
-        final q = await _localDb.getBySupabaseId(LocalTable.questions, questionSupabaseId);
-        if (q != null) row['question_local_id'] = q['local_id'];
+      if (questionSupabaseId.isEmpty) {
+        if (kDebugMode) debugPrint('SyncEngine: skip insert question_choices — missing question_id');
+        return;
       }
+      final q = await _ensureQuestionInLocalDb(client, questionSupabaseId);
+      if (q == null) {
+        if (kDebugMode) {
+          debugPrint('SyncEngine: skip insert question_choices — could not resolve question $questionSupabaseId');
+        }
+        return;
+      }
+      row['question_local_id'] = q['local_id'];
+    } else if (localTable == LocalTable.questionAnswerLogs || localTable == LocalTable.questionLearningStates) {
+      final questionSupabaseId = _str(remote['question_id']);
+      if (questionSupabaseId.isEmpty) {
+        if (kDebugMode) {
+          debugPrint('SyncEngine: skip insert $localTable — missing question_id (remote id ${remote['id']})');
+        }
+        return;
+      }
+      final q = await _ensureQuestionInLocalDb(client, questionSupabaseId);
+      if (q == null) {
+        if (kDebugMode) {
+          debugPrint('SyncEngine: skip insert $localTable — could not resolve question $questionSupabaseId');
+        }
+        return;
+      }
+      row['question_local_id'] = q['local_id'];
     }
     await _localDb.db.insert(localTable, row);
   }
 
   Future<void> _updateLocalFromRemote(String localTable, Map<String, dynamic> remote, String remoteTable, int localId, bool isDeleted) async {
     final row = _remoteToLocalRow(remote, remoteTable);
+    row['supabase_id'] = _str(remote['id']);
     row['dirty'] = 0;
     row['deleted'] = isDeleted ? 1 : 0;
     row['synced_at'] = LocalDatabase.nowUtc();
@@ -314,6 +632,12 @@ class SyncEngine {
         final q = await _localDb.getBySupabaseId(LocalTable.questions, questionSupabaseId);
         if (q != null) row['question_local_id'] = q['local_id'];
       }
+    } else if (localTable == LocalTable.questionAnswerLogs || localTable == LocalTable.questionLearningStates) {
+      final questionSupabaseId = _str(remote['question_id']);
+      if (questionSupabaseId.isNotEmpty) {
+        final q = await _localDb.getBySupabaseId(LocalTable.questions, questionSupabaseId);
+        if (q != null) row['question_local_id'] = q['local_id'];
+      }
     }
     await _localDb.db.update(localTable, row, where: 'local_id = ?', whereArgs: [localId]);
   }
@@ -332,6 +656,8 @@ class SyncEngine {
       map['type'] = remote['type'] ?? 'grammar';
       map['construction'] = (remote['construction'] == true) ? 1 : 0;
       map['author_comment'] = remote['author_comment'];
+      map['dev_completed'] =
+          (remote['dev_completed'] == true || remote['dev_completed'] == 1) ? 1 : 0;
     } else if (remoteTable == 'memorization_cards') {
       map['unit'] = remote['unit'];
       map['front_content'] = remote['front_content'] ?? '';
@@ -344,10 +670,32 @@ class SyncEngine {
       map['explanation'] = remote['explanation'];
       map['reference'] = remote['reference'];
       map['choices'] = remote['choices']?.toString();
+      map['dev_completed'] =
+          (remote['dev_completed'] == true || remote['dev_completed'] == 1) ? 1 : 0;
     } else if (remoteTable == 'question_choices') {
       map['position'] = remote['position'] ?? 0;
       map['choice_text'] = remote['choice_text'] ?? '';
       map['is_correct'] = (remote['is_correct'] == true) ? 1 : 0;
+    } else if (remoteTable == 'question_answer_logs') {
+      map['learner_id'] = remote['learner_id'] ?? '';
+      map['selected_choice_text'] = remote['selected_choice_text'];
+      map['selected_index'] = remote['selected_index'];
+      map['is_correct'] = (remote['is_correct'] == true) ? 1 : 0;
+      map['answered_at'] = remote['answered_at']?.toString() ?? LocalDatabase.nowUtc();
+    } else if (remoteTable == 'question_learning_states') {
+      map['learner_id'] = remote['learner_id'] ?? '';
+      map['question_supabase_id'] = _str(remote['question_id']);
+      map['stability'] = (remote['stability'] as num?)?.toDouble() ?? 1.0;
+      map['difficulty'] = (remote['difficulty'] as num?)?.toDouble() ?? 0.5;
+      map['retrievability'] = (remote['retrievability'] as num?)?.toDouble() ?? 0.5;
+      map['success_streak'] = remote['success_streak'] ?? 0;
+      map['lapse_count'] = remote['lapse_count'] ?? 0;
+      map['reviewed_count'] = remote['reviewed_count'] ?? 0;
+      map['last_is_correct'] = remote['last_is_correct'] == null ? null : ((remote['last_is_correct'] == true) ? 1 : 0);
+      map['last_selected_choice_text'] = remote['last_selected_choice_text'];
+      map['last_selected_index'] = remote['last_selected_index'];
+      map['last_review_at'] = remote['last_review_at']?.toString();
+      map['next_review_at'] = remote['next_review_at']?.toString() ?? LocalDatabase.nowUtc();
     } else if (remoteTable == 'knowledge_tags' || remoteTable == 'memorization_tags') {
       map['name'] = remote['name'] ?? '';
     }
@@ -538,6 +886,8 @@ class SyncEngine {
     await _pushTableSafe(client, LocalTable.memorizationCards, 'memorization_cards', _pushMemorizationCardRow);
     await _pushTable(client, LocalTable.questions, 'questions', _pushQuestionRow);
     await _pushTableSafe(client, LocalTable.questionChoices, 'question_choices', _pushQuestionChoiceRow);
+    await _pushTableSafe(client, LocalTable.questionAnswerLogs, 'question_answer_logs', _pushQuestionAnswerLogRow);
+    await _pushTableSafe(client, LocalTable.questionLearningStates, 'question_learning_states', _pushQuestionLearningStateRow);
     await _pushTagsAndJunctions(client);
   }
 
@@ -612,6 +962,9 @@ class SyncEngine {
       'content': row['content'],
       'description': row['description'],
       'display_order': row['display_order'],
+      'construction': row['construction'] == true || row['construction'] == 1,
+      'author_comment': row['author_comment'],
+      'dev_completed': row['dev_completed'] == true || row['dev_completed'] == 1,
     };
     if (supabaseId == null || supabaseId.isEmpty) {
       final inserted = await client.from('knowledge').insert(payload).select('id').single();
@@ -673,6 +1026,7 @@ class SyncEngine {
       'explanation': row['explanation'],
       'reference': row['reference'],
       'choices': row['choices'],
+      'dev_completed': row['dev_completed'] == true || row['dev_completed'] == 1,
     };
     if (supabaseId == null || supabaseId.isEmpty) {
       final inserted = await client.from('questions').insert(payload).select('id').single();
@@ -704,6 +1058,80 @@ class SyncEngine {
     } else {
       await client.from('question_choices').upsert({...payload, 'id': supabaseId}, onConflict: 'id');
       await _localDb.markSynced(LocalTable.questionChoices, row['local_id'] as int, supabaseId: supabaseId);
+    }
+  }
+
+  Future<void> _pushQuestionAnswerLogRow(SupabaseClient client, Map<String, dynamic> row) async {
+    final questionLocalId = row['question_local_id'];
+    final qr = await _localDb.getByLocalId(LocalTable.questions, questionLocalId as int);
+    final questionSupabaseId = qr?['supabase_id'] as String?;
+    if (questionSupabaseId == null || questionSupabaseId.isEmpty) return;
+
+    final supabaseId = row['supabase_id'] as String?;
+    final payload = {
+      'learner_id': row['learner_id'],
+      'question_id': questionSupabaseId,
+      'selected_choice_text': row['selected_choice_text'],
+      'selected_index': row['selected_index'],
+      'is_correct': (row['is_correct'] == 1),
+      'answered_at': row['answered_at'],
+    };
+    if (supabaseId == null || supabaseId.isEmpty) {
+      final inserted = await client.from('question_answer_logs').insert(payload).select('id').single();
+      final id = (inserted as Map)['id']?.toString();
+      if (id != null) {
+        await _localDb.markSynced(LocalTable.questionAnswerLogs, row['local_id'] as int, supabaseId: id);
+      }
+    } else {
+      await client.from('question_answer_logs').upsert({...payload, 'id': supabaseId}, onConflict: 'id');
+      await _localDb.markSynced(LocalTable.questionAnswerLogs, row['local_id'] as int, supabaseId: supabaseId);
+    }
+  }
+
+  Future<void> _pushQuestionLearningStateRow(SupabaseClient client, Map<String, dynamic> row) async {
+    final questionLocalId = row['question_local_id'];
+    final fromRow = _str(row['question_supabase_id'] as String?);
+    final qr = await _localDb.getByLocalId(LocalTable.questions, questionLocalId as int);
+    final fromQuestion = _str(qr?['supabase_id'] as String?);
+    final questionSupabaseId = fromRow.isNotEmpty ? fromRow : fromQuestion;
+    if (questionSupabaseId.isEmpty) {
+      if (kDebugMode) {
+        debugPrint(
+          'SyncEngine: skip push question_learning_states local_id=${row['local_id']} '
+          '(no question UUID; question_local_id=$questionLocalId)',
+        );
+      }
+      return;
+    }
+
+    final supabaseId = row['supabase_id'] as String?;
+    final learnerId = row['learner_id']?.toString() ?? '';
+    if (learnerId.isEmpty) return;
+
+    final stateFields = <String, dynamic>{
+      'stability': row['stability'],
+      'difficulty': row['difficulty'],
+      'retrievability': row['retrievability'],
+      'success_streak': row['success_streak'],
+      'lapse_count': row['lapse_count'],
+      'reviewed_count': row['reviewed_count'],
+      'last_is_correct': row['last_is_correct'] == null ? null : (row['last_is_correct'] == 1),
+      'last_selected_choice_text': row['last_selected_choice_text'],
+      'last_selected_index': row['last_selected_index'],
+      'last_review_at': row['last_review_at'],
+      'next_review_at': row['next_review_at'],
+      'updated_at': LocalDatabase.nowUtc(),
+    };
+
+    final remoteId = await QuestionLearningStateRemote.upsertState(
+      client: client,
+      learnerId: learnerId,
+      questionId: questionSupabaseId,
+      knownRemoteRowId: supabaseId != null && supabaseId.isNotEmpty ? supabaseId : null,
+      stateFields: stateFields,
+    );
+    if (remoteId != null) {
+      await _localDb.markSynced(LocalTable.questionLearningStates, row['local_id'] as int, supabaseId: remoteId);
     }
   }
 

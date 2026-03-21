@@ -1,0 +1,4 @@
+enum StudyModeFilter {
+  dueToday,
+  allCards,
+}

@@ -1,9 +1,14 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../database/local_database.dart';
 import '../models/english_example.dart';
 import '../models/knowledge.dart';
+import '../repositories/knowledge_repository.dart';
+import '../sync/ensure_synced_for_local_read.dart';
+import '../sync/knowledge_save_remote_status.dart';
 import '../utils/platform_utils.dart';
 import '../widgets/edit_intents.dart';
 import '../widgets/explanation_text.dart';
@@ -23,6 +28,9 @@ class KnowledgeDetailScreen extends StatefulWidget {
     required this.initialIndex,
     this.initialEditing = false,
     this.isLearnerMode = false,
+    this.localDatabase,
+    this.subjectId,
+    this.subjectName,
   });
 
   final List<Knowledge> allKnowledge;
@@ -30,6 +38,10 @@ class KnowledgeDetailScreen extends StatefulWidget {
   final bool initialEditing;
   /// 学習者向け：編集不可・執筆者コメント非表示・英語例文ブロック表示
   final bool isLearnerMode;
+  /// ローカルDB使用時：保存を Repository 経由にして永続化を確実にする
+  final LocalDatabase? localDatabase;
+  final String? subjectId;
+  final String? subjectName;
 
   @override
   State<KnowledgeDetailScreen> createState() => _KnowledgeDetailScreenState();
@@ -48,6 +60,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
   late TextEditingController _authorCommentController;
   late TextEditingController _topicController;
   bool _construction = false;
+  bool _devCompleted = false;
   List<String> _tags = [];
   bool _saving = false;
 
@@ -55,6 +68,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
   final Map<String, String> _savedExplanations = {};
   final Map<String, String> _savedTitles = {};
   final Map<String, bool> _savedConstruction = {};
+  final Map<String, bool> _savedDevCompleted = {};
   final Map<String, List<String>> _savedTags = {};
   final Map<String, String> _savedAuthorComments = {};
   final Map<String, String?> _savedTopic = {};
@@ -110,6 +124,8 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
   Future<void> _loadLinkedQuestions() async {
     if (_allKnowledge.isEmpty) return;
     try {
+      await ensureSyncedForLocalRead();
+      if (!mounted) return;
       final client = Supabase.instance.client;
       final knowledgeIds = _allKnowledge.map((k) => k.id).toList();
       final normalizedToOriginal = <String, String>{};
@@ -179,6 +195,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
     _authorCommentController = TextEditingController(text: k.authorComment ?? '');
     _topicController = TextEditingController(text: k.unit ?? '');
     _construction = k.construction;
+    _devCompleted = _savedDevCompleted[k.id] ?? k.devCompleted;
     _tags = List.from(k.tags);
   }
 
@@ -202,35 +219,96 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
       _authorCommentController.text = _savedAuthorComments[k.id] ?? k.authorComment ?? '';
       _topicController.text = _savedTopic[k.id] ?? k.unit ?? '';
       _construction = _savedConstruction[k.id] ?? k.construction;
+      _devCompleted = _savedDevCompleted[k.id] ?? k.devCompleted;
       _tags = List.from(_savedTags[k.id] ?? k.tags);
     });
   }
 
   void _goToIndex(int index) {
     if (index < 0 || index >= _allKnowledge.length) return;
-    _onPageChanged(index);
+    if (_pageController.hasClients) {
+      _pageController.jumpToPage(index);
+    } else {
+      _onPageChanged(index);
+    }
+  }
+
+  static const _knowledgeSwipeVelocity = 320.0;
+
+  void _onHorizontalFlingEnd(DragEndDetails details) {
+    if (_allKnowledge.length < 2) return;
+    final v = details.primaryVelocity;
+    if (v == null || v.abs() < _knowledgeSwipeVelocity) return;
+    if (v < 0 && _currentIndex < _allKnowledge.length - 1) {
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    } else if (v > 0 && _currentIndex > 0) {
+      _pageController.previousPage(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
+
+  /// モバイルで縦スクロールと競合しても横スワイプで前後カードへ行けるようにする
+  Widget _wrapMobileSwipeTarget(Widget child) {
+    if (isDesktop) return child;
+    return GestureDetector(
+      onHorizontalDragEnd: _onHorizontalFlingEnd,
+      behavior: HitTestBehavior.deferToChild,
+      child: child,
+    );
   }
 
   Future<void> _saveChanges({bool exitEditMode = false}) async {
     setState(() => _saving = true);
     try {
-      final client = Supabase.instance.client;
       final currentKnowledge = _allKnowledge[_currentIndex];
       final title = _titleController.text;
       final text = _explanationController.text;
       final authorComment = _authorCommentController.text;
       final topic = _topicController.text;
 
-      await client.from('knowledge').update(
-        Knowledge.toUpdatePayload(
-          title: title,
-          explanation: text,
-          topic: topic,
+      late final String saveStatusMessage;
+      if (widget.localDatabase != null &&
+          widget.subjectId != null &&
+          widget.subjectName != null) {
+        final repo = createKnowledgeRepository(widget.localDatabase);
+        final updated = Knowledge(
+          id: currentKnowledge.id,
+          subjectId: widget.subjectId,
+          subject: widget.subjectName,
+          unit: topic.trim().isEmpty ? null : topic.trim(),
+          content: title,
+          description: text.isEmpty ? null : text,
+          displayOrder: currentKnowledge.displayOrder,
           construction: _construction,
-          authorComment: authorComment,
-        ),
-      ).eq('id', currentKnowledge.id);
-      await Knowledge.syncTags(client, currentKnowledge.id, _tags);
+          tags: List.from(_tags),
+          authorComment: authorComment.trim().isEmpty ? null : authorComment.trim(),
+          devCompleted: _devCompleted,
+        );
+        final saved = await repo.save(updated, subjectId: widget.subjectId!, subjectName: widget.subjectName!);
+        saveStatusMessage = await knowledgeSaveRemoteStatusAfterLocalPersist(
+          localDb: widget.localDatabase!,
+          knowledgeId: saved.id,
+        );
+      } else {
+        final client = Supabase.instance.client;
+        await client.from('knowledge').update(
+          Knowledge.toUpdatePayload(
+            title: title,
+            explanation: text,
+            topic: topic,
+            construction: _construction,
+            authorComment: authorComment,
+            devCompleted: _devCompleted,
+          ),
+        ).eq('id', currentKnowledge.id);
+        await Knowledge.syncTags(client, currentKnowledge.id, _tags);
+        saveStatusMessage = 'Supabaseに反映しました';
+      }
 
       if (mounted) {
         setState(() {
@@ -239,10 +317,11 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
           _savedAuthorComments[currentKnowledge.id] = authorComment;
           _savedTopic[currentKnowledge.id] = topic.trim().isEmpty ? null : topic.trim();
           _savedConstruction[currentKnowledge.id] = _construction;
+          _savedDevCompleted[currentKnowledge.id] = _devCompleted;
           _savedTags[currentKnowledge.id] = List.from(_tags);
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('保存しました')),
+          SnackBar(content: Text(saveStatusMessage)),
         );
         if (exitEditMode) {
           Navigator.of(context).pop(true);
@@ -309,7 +388,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
     final hasPrevious = _currentIndex > 0;
     final hasNext = _currentIndex < _allKnowledge.length - 1;
 
-    return Scaffold(
+    final scaffold = Scaffold(
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -372,9 +451,14 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                               initialConstruction: _construction,
                               initialTags: List.from(_tags),
                               initialAuthorComment: _authorCommentController.text,
+                              initialDevCompleted:
+                                  _savedDevCompleted[currentKnowledge.id] ?? currentKnowledge.devCompleted,
                               initialTopic: _topicController.text.trim().isEmpty
                                   ? null
                                   : _topicController.text.trim(),
+                              localDatabase: widget.localDatabase,
+                              subjectId: widget.subjectId,
+                              subjectName: widget.subjectName,
                             ),
                           ),
                         );
@@ -422,41 +506,44 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
       ),
       body: _isEditing ? _buildEditView(context) : _buildPageView(context),
     );
-  }
 
-  Widget _buildEditView(BuildContext context) {
+    if (!_isEditing) return scaffold;
+
     return Shortcuts(
       shortcuts: const {
         SingleActivator(LogicalKeyboardKey.keyS, control: true): SaveIntent(),
+        SingleActivator(LogicalKeyboardKey.keyS, meta: true): SaveIntent(),
         SingleActivator(LogicalKeyboardKey.keyW, control: true): CloseEditIntent(),
+        SingleActivator(LogicalKeyboardKey.keyW, meta: true): CloseEditIntent(),
       },
       child: Actions(
         actions: {
           SaveIntent: CallbackAction<SaveIntent>(
-            onInvoke: (_) {
-              _saveChanges(exitEditMode: false);
+            onInvoke: (_) async {
+              await _saveChanges(exitEditMode: false);
               return null;
             },
           ),
           CloseEditIntent: CallbackAction<CloseEditIntent>(
-            onInvoke: (_) {
-              _saveChanges(exitEditMode: true);
+            onInvoke: (_) async {
+              await _saveChanges(exitEditMode: true);
               return null;
             },
           ),
         },
-        child: Focus(
-          autofocus: true,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(child: _buildEditPane(context)),
-              const VerticalDivider(width: 1),
-              Expanded(child: _buildPreviewPane(context)),
-            ],
-          ),
-        ),
+        child: scaffold,
       ),
+    );
+  }
+
+  Widget _buildEditView(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: _buildEditPane(context)),
+        const VerticalDivider(width: 1),
+        Expanded(child: _buildPreviewPane(context)),
+      ],
     );
   }
 
@@ -476,6 +563,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
           const SizedBox(height: 8),
           TextField(
             controller: _titleController,
+            autofocus: true,
             decoration: const InputDecoration(
               labelText: 'タイトル',
               border: OutlineInputBorder(),
@@ -522,6 +610,16 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                     setState(() => _construction = value);
                     await _saveChanges(exitEditMode: false);
                   },
+                  selectedColor: scheme.surfaceContainerHighest,
+                ),
+                FilterChip(
+                  label: const Text('完成'),
+                  selected: _devCompleted,
+                  onSelected: (value) async {
+                    setState(() => _devCompleted = value);
+                    await _saveChanges(exitEditMode: false);
+                  },
+                  tooltip: '開発者が内容を確認済み',
                   selectedColor: scheme.surfaceContainerHighest,
                 ),
               ],
@@ -658,6 +756,11 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                         label: const Text('構文'),
                         backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                       ),
+                    if (_devCompleted)
+                      Chip(
+                        label: const Text('完成'),
+                        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      ),
                   ],
                 ),
               ),
@@ -785,25 +888,33 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
   }
 
   Widget _buildPageView(BuildContext context) {
-    return Stack(
-      children: [
-        PageView.builder(
-          controller: _pageController,
-          onPageChanged: _onPageChanged,
-          itemCount: _allKnowledge.length,
-          itemBuilder: (context, index) {
-            final knowledge = _allKnowledge[index];
-            final explanation = _savedExplanations[knowledge.id] ?? knowledge.explanation;
-            final construction = _savedConstruction[knowledge.id] ?? knowledge.construction;
-            final tags = _savedTags[knowledge.id] ?? knowledge.tags;
-            final topic = _savedTopic[knowledge.id] ?? knowledge.unit;
-            final authorComment =
-                _savedAuthorComments[knowledge.id] ?? knowledge.authorComment ?? '';
+    final pageView = PageView.builder(
+      controller: _pageController,
+      onPageChanged: _onPageChanged,
+      itemCount: _allKnowledge.length,
+      scrollBehavior: ScrollConfiguration.of(context).copyWith(
+        dragDevices: {
+          PointerDeviceKind.touch,
+          PointerDeviceKind.mouse,
+          PointerDeviceKind.stylus,
+          PointerDeviceKind.trackpad,
+        },
+      ),
+      itemBuilder: (context, index) {
+        final knowledge = _allKnowledge[index];
+        final explanation = _savedExplanations[knowledge.id] ?? knowledge.explanation;
+        final construction = _savedConstruction[knowledge.id] ?? knowledge.construction;
+        final devCompleted = _savedDevCompleted[knowledge.id] ?? knowledge.devCompleted;
+        final tags = _savedTags[knowledge.id] ?? knowledge.tags;
+        final topic = _savedTopic[knowledge.id] ?? knowledge.unit;
+        final authorComment =
+            _savedAuthorComments[knowledge.id] ?? knowledge.authorComment ?? '';
 
-            return Column(
+        return _wrapMobileSwipeTarget(
+          Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (topic != null || construction || tags.isNotEmpty)
+                if (topic != null || construction || (!widget.isLearnerMode && devCompleted) || tags.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.all(16.0),
                     child: Wrap(
@@ -818,6 +929,12 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                         if (construction)
                           Chip(
                             label: const Text('構文'),
+                            backgroundColor:
+                                Theme.of(context).colorScheme.surfaceContainerHighest,
+                          ),
+                        if (!widget.isLearnerMode && devCompleted)
+                          Chip(
+                            label: const Text('完成'),
                             backgroundColor:
                                 Theme.of(context).colorScheme.surfaceContainerHighest,
                           ),
@@ -890,10 +1007,15 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                   ),
                 ),
               ],
-            );
-          },
-        ),
-        if (_allKnowledge.length > 1) ...[
+            ),
+        );
+      },
+    );
+
+    return Stack(
+      children: [
+        pageView,
+        if (_allKnowledge.length > 1 && isDesktop) ...[
           Positioned(
             left: 0,
             top: 0,

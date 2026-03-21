@@ -12,6 +12,8 @@ class LocalTable {
   static const memorizationTags = 'local_memorization_tags';
   static const memorizationCardTags = 'local_memorization_card_tags';
   static const questionKnowledge = 'local_question_knowledge';
+  static const questionAnswerLogs = 'local_question_answer_logs';
+  static const questionLearningStates = 'local_question_learning_states';
 }
 
 /// 双方向同期用ローカルDBの CRUD と dirty 管理。

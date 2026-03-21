@@ -5,9 +5,16 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../database/local_database.dart';
 import '../models/knowledge.dart';
 import '../repositories/knowledge_repository.dart';
+import '../sync/ensure_synced_for_local_read.dart';
 import '../sync/sync_engine.dart';
 import '../utils/platform_utils.dart';
 import 'knowledge_detail_screen.dart';
+
+bool _rowNotSoftDeleted(Map<String, dynamic> row) {
+  final v = row['deleted_at'];
+  if (v == null) return true;
+  return v.toString().trim().isEmpty;
+}
 
 /// 指定した科目（subject）の knowledge カード一覧画面
 class KnowledgeListScreen extends StatefulWidget {
@@ -88,7 +95,43 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
         rethrow;
       }
     }
-    return (rows as List<Map<String, dynamic>>).map(Knowledge.fromSupabase).toList();
+    final maps = (rows as List<Map<String, dynamic>>).where(_rowNotSoftDeleted).toList();
+    return maps.map(Knowledge.fromSupabase).toList();
+  }
+
+  /// ローカルに一部の行しか無いとき、Supabase 上にだけあるカードを足して欠損を防ぐ。
+  Future<List<Knowledge>> _mergeLocalWithSupabase(List<Knowledge> local) async {
+    try {
+      final remote = await _fetchKnowledgeFromSupabase();
+      if (remote.isEmpty) return local;
+      final seen = <String, Knowledge>{for (final k in local) k.id: k};
+      var added = 0;
+      for (final k in remote) {
+        if (!seen.containsKey(k.id)) {
+          seen[k.id] = k;
+          added++;
+        }
+      }
+      if (kDebugMode && added > 0) {
+        debugPrint(
+          '[KnowledgeListScreen] merge: local=${local.length}, +$added from Supabase → ${seen.length} total',
+        );
+      }
+      final merged = seen.values.toList()
+        ..sort((a, b) {
+          final oa = a.displayOrder ?? 0;
+          final ob = b.displayOrder ?? 0;
+          final c = oa.compareTo(ob);
+          if (c != 0) return c;
+          return a.id.compareTo(b.id);
+        });
+      return merged;
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('[KnowledgeListScreen] merge skipped: $e\n$st');
+      }
+      return local;
+    }
   }
 
   Future<void> _load() async {
@@ -96,6 +139,9 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
       _isLoading = true;
       _error = null;
     });
+    await ensureSyncedForLocalRead();
+    if (!mounted) return;
+
     final dataSource = widget.localDatabase != null ? 'LocalDB' : 'Supabase';
     if (kDebugMode) {
       debugPrint('[KnowledgeListScreen._load] subjectId=${widget.subjectId}, dataSource=$dataSource');
@@ -109,6 +155,8 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
         if (list.isEmpty) {
           if (kDebugMode) debugPrint('[KnowledgeListScreen._load] LocalDB empty → fallback to Supabase');
           list = await _fetchKnowledgeFromSupabase();
+        } else {
+          list = await _mergeLocalWithSupabase(list);
         }
         if (mounted) setState(() => _items = list);
       } else {
@@ -147,17 +195,20 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
         if (mounted) {
           final newIndex = _items.indexWhere((e) => e.id == saved.id);
           if (newIndex >= 0) {
-            final changed = await Navigator.of(context).push<bool>(
+            await Navigator.of(context).push<bool>(
               MaterialPageRoute<bool>(
                 builder: (context) => KnowledgeDetailScreen(
                   allKnowledge: _items,
                   initialIndex: newIndex,
                   initialEditing: true,
                   isLearnerMode: widget.isLearnerMode,
+                  localDatabase: widget.localDatabase,
+                  subjectId: widget.subjectId,
+                  subjectName: widget.subjectName,
                 ),
               ),
             );
-            if (changed == true && mounted) await _load();
+            if (mounted) await _load();
           }
         }
       } else {
@@ -177,17 +228,20 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
         if (mounted) {
           final newIndex = _items.indexWhere((e) => e.id == newCard.id);
           if (newIndex >= 0) {
-            final changed = await Navigator.of(context).push<bool>(
+            await Navigator.of(context).push<bool>(
               MaterialPageRoute<bool>(
                 builder: (context) => KnowledgeDetailScreen(
                   allKnowledge: _items,
                   initialIndex: newIndex,
                   initialEditing: true,
                   isLearnerMode: widget.isLearnerMode,
+                  localDatabase: widget.localDatabase,
+                  subjectId: widget.subjectId,
+                  subjectName: widget.subjectName,
                 ),
               ),
             );
-            if (changed == true && mounted) await _load();
+            if (mounted) await _load();
           }
         }
       }
@@ -201,17 +255,21 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
   }
 
   Future<void> _openDetail(int index) async {
-    final changed = await Navigator.of(context).push<bool>(
+    await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
         builder: (context) => KnowledgeDetailScreen(
           allKnowledge: _items,
           initialIndex: index,
           initialEditing: widget.isLearnerMode ? false : isDesktop,
           isLearnerMode: widget.isLearnerMode,
+          localDatabase: widget.localDatabase,
+          subjectId: widget.subjectId,
+          subjectName: widget.subjectName,
         ),
       ),
     );
-    if (changed == true && mounted) await _load();
+    // OS/AppBar の戻るは pop(true) にならない。手動「再読み込み」と同様、戻ったら常に再取得する。
+    if (mounted) await _load();
   }
 
   Future<void> _reorderCards(int oldIndex, int newIndex) async {

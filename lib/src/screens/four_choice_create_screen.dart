@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/question_choice.dart';
+import '../sync/ensure_synced_for_local_read.dart';
 
 /// 四択問題の新規作成・編集画面
 class FourChoiceCreateScreen extends StatefulWidget {
@@ -26,6 +27,8 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
   int _correctIndex = 0;
   /// コア問題フラグ（true = 習得判定に含める必須問題、false = 追加演習用）
   bool _isCore = true;
+  /// 開発者が問題内容を確認済み（AI 生成のレビュー用）
+  bool _devCompleted = false;
   List<Map<String, dynamic>> _subjects = [];
   List<Map<String, dynamic>> _knowledgeList = [];
   String? _selectedSubjectId;
@@ -57,6 +60,8 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
   Future<void> _loadSubjects() async {
     setState(() => _loadingSubjects = true);
     try {
+      await ensureSyncedForLocalRead();
+      if (!mounted) return;
       final client = Supabase.instance.client;
       final rows = await client.from('subjects').select().order('display_order');
       if (mounted) {
@@ -79,6 +84,8 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
     if (id == null) return;
     setState(() => _loadingQuestion = true);
     try {
+      await ensureSyncedForLocalRead();
+      if (!mounted) return;
       final client = Supabase.instance.client;
       dynamic q;
       try {
@@ -145,12 +152,14 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
       }
 
       if (!mounted) return;
+      final devDone = q['dev_completed'] == true;
       setState(() {
         _questionController.text = questionText;
         _explanationController.text = explanation;
         _referenceController.text = reference;
         for (var i = 0; i < 4; i++) _choiceControllers[i].text = choiceTexts[i];
         _correctIndex = correctIdx;
+        _devCompleted = devDone;
         _loadingQuestion = false;
       });
 
@@ -195,6 +204,8 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
     }
     setState(() => _loadingKnowledge = true);
     try {
+      await ensureSyncedForLocalRead();
+      if (!mounted) return;
       final client = Supabase.instance.client;
       final rows = await client
           .from('knowledge')
@@ -249,13 +260,17 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
           'question_text': questionText,
           'correct_answer': correctAnswer,
           'explanation': explanation,
+          'dev_completed': _devCompleted,
         };
         if (reference != null) updatePayload['reference'] = reference;
         try {
           await client.from('questions').update(updatePayload).eq('id', questionId);
         } on PostgrestException catch (e) {
           if (e.code == '42703' || (e.message.contains('reference') && e.message.contains('does not exist'))) {
-            updatePayload.remove('reference');
+            if (e.message.contains('dev_completed')) updatePayload.remove('dev_completed');
+            if (e.message.contains('reference') && e.message.contains('does not exist')) {
+              updatePayload.remove('reference');
+            }
             await client.from('questions').update(updatePayload).eq('id', questionId);
           } else {
             rethrow;
@@ -304,6 +319,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
           'question_text': questionText,
           'correct_answer': correctAnswer,
           'explanation': explanation,
+          'dev_completed': _devCompleted,
         };
         if (reference != null) insertPayload['reference'] = reference;
         dynamic inserted;
@@ -311,7 +327,10 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
           inserted = await client.from('questions').insert(insertPayload).select('id').single();
         } on PostgrestException catch (e) {
           if (e.code == '42703' || (e.message.contains('reference') && e.message.contains('does not exist'))) {
-            insertPayload.remove('reference');
+            if (e.message.contains('dev_completed')) insertPayload.remove('dev_completed');
+            if (e.message.contains('reference') && e.message.contains('does not exist')) {
+              insertPayload.remove('reference');
+            }
             inserted = await client.from('questions').insert(insertPayload).select('id').single();
           } else {
             rethrow;
@@ -497,6 +516,12 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
               subtitle: const Text('オン: 習得判定に含める必須問題／オフ: 追加演習用'),
               value: _isCore,
               onChanged: (v) => setState(() => _isCore = v),
+            ),
+            SwitchListTile(
+              title: const Text('完成（開発者確認済み）'),
+              subtitle: const Text('AI 生成などのカードを、内容確認済みとしてマークします'),
+              value: _devCompleted,
+              onChanged: (v) => setState(() => _devCompleted = v),
             ),
             const SizedBox(height: 32),
             FilledButton.icon(

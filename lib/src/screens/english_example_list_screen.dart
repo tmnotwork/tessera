@@ -2,18 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/english_example.dart';
+import '../sync/ensure_synced_for_local_read.dart';
 import 'english_example_solve_screen.dart';
 
 class EnglishExampleListScreen extends StatefulWidget {
   const EnglishExampleListScreen({
     super.key,
-    required this.subjectId,
-    required this.subjectName,
+    this.subjectId,
+    this.subjectName,
     this.isLearnerMode = false,
   });
 
-  final String subjectId;
-  final String subjectName;
+  final String? subjectId;
+  final String? subjectName;
   /// true: 閲覧・出題のみ（教師向けの追加・編集は不可）
   final bool isLearnerMode;
 
@@ -42,22 +43,37 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       _error = null;
     });
     try {
-      final knowledge = await _client
-          .from('knowledge')
-          .select('id, content, unit')
-          .eq('subject_id', widget.subjectId)
-          .order('display_order', ascending: true)
-          .order('created_at', ascending: true);
+      await ensureSyncedForLocalRead();
+      if (!mounted) return;
+      final knowledge = widget.subjectId == null
+          ? await _client
+              .from('knowledge')
+              .select('id, content, unit')
+              .order('display_order', ascending: true)
+              .order('created_at', ascending: true)
+          : await _client
+              .from('knowledge')
+              .select('id, content, unit')
+              .eq('subject_id', widget.subjectId!)
+              .order('display_order', ascending: true)
+              .order('created_at', ascending: true);
 
       List<Map<String, dynamic>> examples = [];
       try {
-        final rows = await _client
-            .from('english_examples')
-            .select('id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, '
-                'knowledge:knowledge_id(id, content, unit)')
-            .eq('knowledge.subject_id', widget.subjectId)
-            .order('display_order', ascending: true)
-            .order('created_at', ascending: true);
+        final rows = widget.subjectId == null
+            ? await _client
+                .from('english_examples')
+                .select('id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, '
+                    'knowledge:knowledge_id(id, content, unit)')
+                .order('display_order', ascending: true)
+                .order('created_at', ascending: true)
+            : await _client
+                .from('english_examples')
+                .select('id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, '
+                    'knowledge:knowledge_id(id, content, unit)')
+                .eq('knowledge.subject_id', widget.subjectId!)
+                .order('display_order', ascending: true)
+                .order('created_at', ascending: true);
         examples = List<Map<String, dynamic>>.from(rows);
       } on PostgrestException catch (e) {
         final missingTable = e.code == 'PGRST205' &&
@@ -339,9 +355,12 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final baseTitle = widget.subjectName == null || widget.subjectName!.isEmpty
+        ? '英語例文'
+        : '${widget.subjectName} · 英語例文';
     final title = widget.isLearnerMode
-        ? '${widget.subjectName} · 英語例文'
-        : '${widget.subjectName} / 英語例文DB';
+        ? baseTitle
+        : '$baseTitle DB';
     return Scaffold(
       appBar: AppBar(
         title: Text(title),

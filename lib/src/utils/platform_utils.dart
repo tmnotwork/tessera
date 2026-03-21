@@ -5,6 +5,8 @@ bool get isDesktop =>
     defaultTargetPlatform == TargetPlatform.macOS ||
     defaultTargetPlatform == TargetPlatform.linux;
 
+bool get isWindows => defaultTargetPlatform == TargetPlatform.windows;
+
 bool get isAndroid => defaultTargetPlatform == TargetPlatform.android;
 
 bool get isMobile => !isDesktop;

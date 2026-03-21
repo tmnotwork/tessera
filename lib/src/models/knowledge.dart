@@ -20,6 +20,8 @@ class Knowledge {
   final bool construction;
   final List<String> tags;  // knowledge_card_tags 経由
   final String? authorComment;
+  /// 開発者が内容を確認済み（AI 生成カードのレビュー用）
+  final bool devCompleted;
 
   Knowledge({
     required this.id,
@@ -33,6 +35,7 @@ class Knowledge {
     this.construction = false,
     this.tags = const [],
     this.authorComment,
+    this.devCompleted = false,
   });
 
   // 旧モデルとの互換エイリアス
@@ -54,8 +57,12 @@ class Knowledge {
       construction: row['construction'] as bool? ?? false,
       tags: _parseTagsFromRow(row),
       authorComment: row['author_comment'] as String?,
+      devCompleted: row['dev_completed'] as bool? ?? false,
     );
   }
+
+  /// SQLite の INTEGER / 真偽を bool に（1 / true のみ true）
+  static bool _sqlBool(dynamic v) => v == true || v == 1;
 
   /// ローカルDBの local_knowledge 行から生成。tags は local_knowledge_card_tags から別途渡す。
   factory Knowledge.fromLocal(Map<String, dynamic> row, {List<String> tags = const []}) {
@@ -71,9 +78,10 @@ class Knowledge {
       description: row['description'] as String?,
       type: row['type'] as String? ?? 'grammar',
       displayOrder: row['display_order'] as int?,
-      construction: (row['construction'] == 1),
+      construction: _sqlBool(row['construction']),
       tags: List<String>.from(tags)..sort(),
       authorComment: row['author_comment'] as String?,
+      devCompleted: _sqlBool(row['dev_completed']),
     );
   }
 
@@ -107,6 +115,7 @@ class Knowledge {
     required String? topic,
     required bool construction,
     required String? authorComment,
+    required bool devCompleted,
   }) {
     final topicTrimmed = topic?.trim();
     final commentTrimmed = authorComment?.trim();
@@ -116,6 +125,7 @@ class Knowledge {
       'unit': (topicTrimmed == null || topicTrimmed.isEmpty) ? null : topicTrimmed,
       'construction': construction,
       'author_comment': (commentTrimmed == null || commentTrimmed.isEmpty) ? null : commentTrimmed,
+      'dev_completed': devCompleted,
     };
   }
 

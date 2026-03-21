@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../database/local_database.dart';
 import '../models/knowledge.dart';
+import '../repositories/knowledge_repository.dart';
+import '../sync/knowledge_save_remote_status.dart';
 
 /// モバイル用の全画面編集画面
 class KnowledgeEditScreen extends StatefulWidget {
@@ -13,7 +16,11 @@ class KnowledgeEditScreen extends StatefulWidget {
     required this.initialConstruction,
     required this.initialTags,
     required this.initialAuthorComment,
+    required this.initialDevCompleted,
     this.initialTopic,
+    this.localDatabase,
+    this.subjectId,
+    this.subjectName,
   });
 
   final Knowledge currentKnowledge;
@@ -22,7 +29,11 @@ class KnowledgeEditScreen extends StatefulWidget {
   final bool initialConstruction;
   final List<String> initialTags;
   final String initialAuthorComment;
+  final bool initialDevCompleted;
   final String? initialTopic;
+  final LocalDatabase? localDatabase;
+  final String? subjectId;
+  final String? subjectName;
 
   @override
   State<KnowledgeEditScreen> createState() => _KnowledgeEditScreenState();
@@ -35,6 +46,7 @@ class _KnowledgeEditScreenState extends State<KnowledgeEditScreen> {
   late TextEditingController _customTagController;
   late TextEditingController _topicController;
   late bool _construction;
+  late bool _devCompleted;
   late List<String> _tags;
   bool _saving = false;
 
@@ -49,6 +61,7 @@ class _KnowledgeEditScreenState extends State<KnowledgeEditScreen> {
       text: widget.initialTopic ?? widget.currentKnowledge.unit ?? '',
     );
     _construction = widget.initialConstruction;
+    _devCompleted = widget.initialDevCompleted;
     _tags = List.from(widget.initialTags);
   }
 
@@ -65,21 +78,53 @@ class _KnowledgeEditScreenState extends State<KnowledgeEditScreen> {
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      final client = Supabase.instance.client;
-      await client.from('knowledge').update(
-        Knowledge.toUpdatePayload(
-          title: _titleController.text,
-          explanation: _explanationController.text,
-          topic: _topicController.text,
+      final title = _titleController.text;
+      final explanation = _explanationController.text;
+      final topic = _topicController.text;
+      final authorComment = _authorCommentController.text;
+
+      late final String saveStatusMessage;
+      if (widget.localDatabase != null &&
+          widget.subjectId != null &&
+          widget.subjectName != null) {
+        final repo = createKnowledgeRepository(widget.localDatabase);
+        final updated = Knowledge(
+          id: widget.currentKnowledge.id,
+          subjectId: widget.subjectId,
+          subject: widget.subjectName,
+          unit: topic.trim().isEmpty ? null : topic.trim(),
+          content: title,
+          description: explanation.isEmpty ? null : explanation,
+          displayOrder: widget.currentKnowledge.displayOrder,
           construction: _construction,
-          authorComment: _authorCommentController.text,
-        ),
-      ).eq('id', widget.currentKnowledge.id);
-      await Knowledge.syncTags(client, widget.currentKnowledge.id, _tags);
+          tags: List.from(_tags),
+          authorComment: authorComment.trim().isEmpty ? null : authorComment.trim(),
+          devCompleted: _devCompleted,
+        );
+        final saved = await repo.save(updated, subjectId: widget.subjectId!, subjectName: widget.subjectName!);
+        saveStatusMessage = await knowledgeSaveRemoteStatusAfterLocalPersist(
+          localDb: widget.localDatabase!,
+          knowledgeId: saved.id,
+        );
+      } else {
+        final client = Supabase.instance.client;
+        await client.from('knowledge').update(
+          Knowledge.toUpdatePayload(
+            title: title,
+            explanation: explanation,
+            topic: topic,
+            construction: _construction,
+            authorComment: authorComment,
+            devCompleted: _devCompleted,
+          ),
+        ).eq('id', widget.currentKnowledge.id);
+        await Knowledge.syncTags(client, widget.currentKnowledge.id, _tags);
+        saveStatusMessage = 'Supabaseに反映しました';
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('保存しました')),
+          SnackBar(content: Text(saveStatusMessage)),
         );
         Navigator.of(context).pop(true);
       }
@@ -215,15 +260,22 @@ class _KnowledgeEditScreenState extends State<KnowledgeEditScreen> {
                     }),
                     selectedColor: scheme.surfaceContainerHighest,
                   ),
-                  FilterChip(
-                    label: const Text('構文'),
-                    selected: _construction,
-                    onSelected: (value) => setState(() => _construction = value),
-                    selectedColor: scheme.surfaceContainerHighest,
-                  ),
-                ],
-              ),
+                FilterChip(
+                  label: const Text('構文'),
+                  selected: _construction,
+                  onSelected: (value) => setState(() => _construction = value),
+                  selectedColor: scheme.surfaceContainerHighest,
+                ),
+                FilterChip(
+                  label: const Text('完成'),
+                  selected: _devCompleted,
+                  onSelected: (value) => setState(() => _devCompleted = value),
+                  tooltip: '開発者が内容を確認済み',
+                  selectedColor: scheme.surfaceContainerHighest,
+                ),
+              ],
             ),
+          ),
             Padding(
               padding: const EdgeInsets.only(top: 4.0, bottom: 8.0),
               child: Wrap(

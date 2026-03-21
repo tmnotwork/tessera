@@ -11,13 +11,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'src/app_route_observer.dart';
 import 'src/app_scope.dart';
 import 'src/asset_import.dart';
 import 'src/database/local_db.dart';
 import 'src/database/local_database.dart';
 import 'src/init_sqflite_stub.dart' if (dart.library.io) 'src/init_sqflite_io.dart' as init_sqflite;
 import 'src/repositories/subject_repository.dart';
+import 'src/sync/ensure_synced_for_local_read.dart';
 import 'src/sync/sync_engine.dart';
+import 'src/widgets/force_sync_icon_button.dart';
 import 'src/screens/four_choice_list_screen.dart';
 import 'src/screens/knowledge_list_screen.dart';
 import 'src/screens/english_example_list_screen.dart';
@@ -27,6 +30,7 @@ import 'src/screens/memorization_list_screen.dart';
 import 'src/learner_admin.dart';
 import 'src/screens/learner_management_screen.dart';
 import 'src/screens/teacher_login_screen.dart';
+import 'src/utils/platform_utils.dart';
 
 // 実機ビルドでは .env が同梱されないため、フォールバック用の公開キー
 const _fallbackSupabaseUrl = 'https://wnufzrehvhcwclnwxwim.supabase.co';
@@ -80,7 +84,10 @@ Future<void> main() async {
     final db = await _initLocalDb();
     final localDatabase = LocalDatabase(db);
     SyncEngine.init(localDatabase);
-    SyncEngine.instance.syncIfOnline();
+    // 未ログインで sync すると RLS により Pull が空/失敗しやすい。セッション復元済みのときだけ起動時同期。
+    if (Supabase.instance.client.auth.currentSession != null) {
+      SyncEngine.instance.syncIfOnline();
+    }
     runApp(RootApp(localDb: db, localDatabase: localDatabase));
   }, (error, stack) {
     if (kDebugMode) {
@@ -100,11 +107,7 @@ class StartupErrorApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
-        fontFamily: 'NotoSansJP',
-      ),
+      theme: _buildLightTheme(),
       home: Scaffold(
         body: SafeArea(
           child: SingleChildScrollView(
@@ -186,19 +189,167 @@ class StartupErrorApp extends StatelessWidget {
 
 const _themeModeKey = 'theme_mode';
 
+/// ライト: 白基調・黒をアクセント（FilledButton / 強調テキスト）
+ColorScheme _monoLightColorScheme() {
+  return ColorScheme.fromSeed(
+    seedColor: const Color(0xFF212121),
+    brightness: Brightness.light,
+  ).copyWith(
+    primary: const Color(0xFF000000),
+    onPrimary: const Color(0xFFFFFFFF),
+    primaryContainer: const Color(0xFFE8E8E8),
+    onPrimaryContainer: const Color(0xFF000000),
+    secondary: const Color(0xFF424242),
+    onSecondary: const Color(0xFFFFFFFF),
+    secondaryContainer: const Color(0xFFF2F2F2),
+    onSecondaryContainer: const Color(0xFF1A1A1A),
+    surface: const Color(0xFFFFFFFF),
+    onSurface: const Color(0xFF000000),
+    surfaceContainerLow: const Color(0xFFFAFAFA),
+    surfaceContainer: const Color(0xFFF7F7F7),
+    surfaceContainerHigh: const Color(0xFFF2F2F2),
+    surfaceContainerHighest: const Color(0xFFEDEDED),
+    onSurfaceVariant: const Color(0xFF5C5C5C),
+    outline: const Color(0xFFC8C8C8),
+    outlineVariant: const Color(0xFFE6E6E6),
+    surfaceTint: Colors.transparent,
+  );
+}
+
+/// ダーク: 黒基調・白をアクセント
+ColorScheme _monoDarkColorScheme() {
+  return ColorScheme.fromSeed(
+    seedColor: const Color(0xFFE0E0E0),
+    brightness: Brightness.dark,
+  ).copyWith(
+    primary: const Color(0xFFFFFFFF),
+    onPrimary: const Color(0xFF000000),
+    primaryContainer: const Color(0xFF2E2E2E),
+    onPrimaryContainer: const Color(0xFFFFFFFF),
+    secondary: const Color(0xFFBDBDBD),
+    onSecondary: const Color(0xFF000000),
+    secondaryContainer: const Color(0xFF242424),
+    onSecondaryContainer: const Color(0xFFE8E8E8),
+    surface: const Color(0xFF000000),
+    onSurface: const Color(0xFFFFFFFF),
+    surfaceContainerLow: const Color(0xFF0A0A0A),
+    surfaceContainer: const Color(0xFF121212),
+    surfaceContainerHigh: const Color(0xFF161616),
+    surfaceContainerHighest: const Color(0xFF1C1C1C),
+    onSurfaceVariant: const Color(0xFFB3B3B3),
+    outline: const Color(0xFF4A4A4A),
+    outlineVariant: const Color(0xFF333333),
+    surfaceTint: Colors.transparent,
+  );
+}
+
 ThemeData _buildLightTheme() {
+  final scheme = _monoLightColorScheme();
   return ThemeData(
-    colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
     useMaterial3: true,
     fontFamily: 'NotoSansJP',
+    colorScheme: scheme,
+    scaffoldBackgroundColor: scheme.surface,
+    appBarTheme: AppBarTheme(
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      backgroundColor: scheme.surface,
+      foregroundColor: scheme.onSurface,
+      surfaceTintColor: Colors.transparent,
+      iconTheme: IconThemeData(color: scheme.onSurface),
+      titleTextStyle: TextStyle(
+        color: scheme.onSurface,
+        fontSize: 20,
+        fontWeight: FontWeight.w600,
+        fontFamily: 'NotoSansJP',
+      ),
+    ),
+    navigationBarTheme: NavigationBarThemeData(
+      elevation: 0,
+      backgroundColor: scheme.surface,
+      surfaceTintColor: Colors.transparent,
+      indicatorColor: scheme.primaryContainer,
+      labelTextStyle: WidgetStateProperty.resolveWith((states) {
+        final selected = states.contains(WidgetState.selected);
+        return TextStyle(
+          fontSize: 12,
+          fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+          color: selected ? scheme.primary : scheme.onSurfaceVariant,
+          fontFamily: 'NotoSansJP',
+        );
+      }),
+      iconTheme: WidgetStateProperty.resolveWith((states) {
+        final selected = states.contains(WidgetState.selected);
+        return IconThemeData(
+          color: selected ? scheme.primary : scheme.onSurfaceVariant,
+          size: 24,
+        );
+      }),
+    ),
+    dividerTheme: DividerThemeData(color: scheme.outlineVariant, thickness: 1),
+    listTileTheme: ListTileThemeData(iconColor: scheme.onSurfaceVariant),
+    dialogTheme: DialogThemeData(backgroundColor: scheme.surface, surfaceTintColor: Colors.transparent),
+    bottomSheetTheme: BottomSheetThemeData(backgroundColor: scheme.surface, surfaceTintColor: Colors.transparent),
+    snackBarTheme: SnackBarThemeData(
+      backgroundColor: scheme.inverseSurface,
+      contentTextStyle: TextStyle(color: scheme.onInverseSurface, fontFamily: 'NotoSansJP'),
+      actionTextColor: scheme.inversePrimary,
+    ),
   );
 }
 
 ThemeData _buildDarkTheme() {
+  final scheme = _monoDarkColorScheme();
   return ThemeData(
-    colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo, brightness: Brightness.dark),
     useMaterial3: true,
     fontFamily: 'NotoSansJP',
+    colorScheme: scheme,
+    scaffoldBackgroundColor: scheme.surface,
+    appBarTheme: AppBarTheme(
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      backgroundColor: scheme.surface,
+      foregroundColor: scheme.onSurface,
+      surfaceTintColor: Colors.transparent,
+      iconTheme: IconThemeData(color: scheme.onSurface),
+      titleTextStyle: TextStyle(
+        color: scheme.onSurface,
+        fontSize: 20,
+        fontWeight: FontWeight.w600,
+        fontFamily: 'NotoSansJP',
+      ),
+    ),
+    navigationBarTheme: NavigationBarThemeData(
+      elevation: 0,
+      backgroundColor: scheme.surface,
+      surfaceTintColor: Colors.transparent,
+      indicatorColor: scheme.primaryContainer,
+      labelTextStyle: WidgetStateProperty.resolveWith((states) {
+        final selected = states.contains(WidgetState.selected);
+        return TextStyle(
+          fontSize: 12,
+          fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+          color: selected ? scheme.primary : scheme.onSurfaceVariant,
+          fontFamily: 'NotoSansJP',
+        );
+      }),
+      iconTheme: WidgetStateProperty.resolveWith((states) {
+        final selected = states.contains(WidgetState.selected);
+        return IconThemeData(
+          color: selected ? scheme.primary : scheme.onSurfaceVariant,
+          size: 24,
+        );
+      }),
+    ),
+    dividerTheme: DividerThemeData(color: scheme.outlineVariant, thickness: 1),
+    listTileTheme: ListTileThemeData(iconColor: scheme.onSurfaceVariant),
+    dialogTheme: DialogThemeData(backgroundColor: scheme.surface, surfaceTintColor: Colors.transparent),
+    bottomSheetTheme: BottomSheetThemeData(backgroundColor: scheme.surface, surfaceTintColor: Colors.transparent),
+    snackBarTheme: SnackBarThemeData(
+      backgroundColor: scheme.inverseSurface,
+      contentTextStyle: TextStyle(color: scheme.onInverseSurface, fontFamily: 'NotoSansJP'),
+      actionTextColor: scheme.inversePrimary,
+    ),
   );
 }
 
@@ -267,6 +418,7 @@ class _RootAppState extends State<RootApp> {
       theme: _buildLightTheme(),
       darkTheme: _buildDarkTheme(),
       themeMode: _themeMode,
+      navigatorObservers: [appRouteObserver],
       home: RootScaffold(key: _rootScaffoldKey, localDb: widget.localDb, localDatabase: widget.localDatabase),
     );
   }
@@ -287,7 +439,8 @@ class RootScaffold extends StatefulWidget {
 }
 
 class _RootScaffoldState extends State<RootScaffold> {
-  int _index = 0;
+  /// Windows デスクトップ起動時は教師用管理を最初に表示（タブ順: 0学習 / 1知識DB / 2教師用管理）
+  int _index = isWindows ? 2 : 0;
   String? _role;
   bool _authReady = false;
   _LoginGateMode _loginGateMode = _LoginGateMode.choose;
@@ -302,6 +455,14 @@ class _RootScaffoldState extends State<RootScaffold> {
     super.initState();
     appAuthNotifier.listen(_onAuthChanged);
     _refreshRole();
+    // onAuthStateChange は listen 登録より前に initialSession が流れると取りこぼす。
+    // その場合ログイン済みでも同期が一度も走らないため、1 フレーム後にログイン時だけ明示的に同期をかける。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!kIsWeb && SyncEngine.isInitialized && appAuthNotifier.isLoggedIn) {
+        SyncEngine.instance.syncIfOnline();
+      }
+    });
     if (!kIsWeb && SyncEngine.isInitialized) {
       _connectivitySubscription = Connectivity().onConnectivityChanged.listen((result) {
         final hasConnection = result.any((r) => r != ConnectivityResult.none);
@@ -387,7 +548,23 @@ class _RootScaffoldState extends State<RootScaffold> {
       return const LearnerLoginScreen();
     }
     return LearnerHomeScreen(
+      localDatabase: widget.localDatabase,
       onOpenManage: _role == 'teacher' ? () => setState(() => _index = 2) : null,
+    );
+  }
+
+  /// Windows / macOS / Linux のみナビに出す。学習メニューをスマホ相当幅で確認する。
+  Widget _buildLearnerMobilePreviewTab() {
+    if (!_authReady) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (!appAuthNotifier.isLoggedIn) {
+      return const LearnerLoginScreen();
+    }
+    return LearnerHomeScreen(
+      localDatabase: widget.localDatabase,
+      onOpenManage: _role == 'teacher' ? () => setState(() => _index = 2) : null,
+      embedInDesktopMobileFrame: true,
     );
   }
 
@@ -419,7 +596,10 @@ class _RootScaffoldState extends State<RootScaffold> {
       });
     }
     return Scaffold(
-      appBar: AppBar(title: const Text('教材管理')),
+      appBar: AppBar(
+        title: const Text('教材管理'),
+        actions: const [ForceSyncIconButton()],
+      ),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -479,10 +659,11 @@ class _RootScaffoldState extends State<RootScaffold> {
       );
     }
 
-    final pages = [
+    final pages = <Widget>[
       _buildLearnerTab(),
       KnowledgeDbHomePage(localDb: widget.localDb, localDatabase: widget.localDatabase),
       _buildTeacherTab(),
+      if (isDesktop) _buildLearnerMobilePreviewTab(),
     ];
 
     return Scaffold(
@@ -520,29 +701,35 @@ class _RootScaffoldState extends State<RootScaffold> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(
+        destinations: [
+          const NavigationDestination(
             icon: Icon(Icons.school_outlined),
             selectedIcon: Icon(Icons.school),
             label: '学習',
           ),
-          NavigationDestination(
+          const NavigationDestination(
             icon: Icon(Icons.menu_book_outlined),
             selectedIcon: Icon(Icons.menu_book),
             label: '知識DB',
           ),
-          NavigationDestination(
+          const NavigationDestination(
             icon: Icon(Icons.manage_search_outlined),
             selectedIcon: Icon(Icons.manage_search),
             label: '教師用管理',
           ),
+          if (isDesktop)
+            const NavigationDestination(
+              icon: Icon(Icons.smartphone_outlined),
+              selectedIcon: Icon(Icons.smartphone),
+              label: 'スマホ幅',
+            ),
         ],
       ),
     );
   }
 }
 
-/// 未ログイン時に表示。学習者/教師のログインを選ばせ、ログイン後にアプリ本体（3タブ）へ。
+/// 未ログイン時に表示。学習者/教師のログインを選ばせ、ログイン後にアプリ本体（タブ）へ。
 class _LoginGateScreen extends StatelessWidget {
   const _LoginGateScreen({
     required this.onShowLearnerLogin,
@@ -636,12 +823,6 @@ class _KnowledgeDbHomePageState extends State<KnowledgeDbHomePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _fetchSubjects();
     });
-    // モバイル/デスクトップ: 同期完了後にローカルが埋まるので1回だけ遅延再取得
-    if (widget.localDatabase != null) {
-      Future.delayed(const Duration(seconds: 2), () {
-        if (mounted) _fetchSubjects();
-      });
-    }
   }
 
   Future<void> _fetchSubjects() async {
@@ -650,6 +831,8 @@ class _KnowledgeDbHomePageState extends State<KnowledgeDbHomePage> {
       _error = null;
     });
     try {
+      await ensureSyncedForLocalRead();
+      if (!mounted) return;
       final repo = createSubjectRepository(widget.localDatabase);
       final rows = await repo.getSubjectsOrderByDisplayOrder();
       if (mounted) {
@@ -673,6 +856,7 @@ class _KnowledgeDbHomePageState extends State<KnowledgeDbHomePage> {
       appBar: AppBar(
         title: const Text('知識DB'),
         actions: [
+          const ForceSyncIconButton(),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loading ? null : _fetchSubjects,
@@ -1223,12 +1407,7 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
   void _openEnglishExampleDb() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => _SubjectPickerPage(
-          subjects: _subjects,
-          title: '英語例文DB',
-          dbType: _TeacherDbType.englishExamples,
-          localDatabase: widget.localDatabase,
-        ),
+        builder: (context) => const EnglishExampleListScreen(),
       ),
     );
   }
@@ -1247,6 +1426,7 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
       appBar: AppBar(
         title: const Text('教材管理'),
         actions: [
+          const ForceSyncIconButton(),
           IconButton(
             icon: const Icon(Icons.wifi_find),
             tooltip: 'Supabase 接続テスト',
@@ -1422,7 +1602,7 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
 }
 
 /// 知識DB / 暗記DB 用の科目選択ページ
-enum _TeacherDbType { knowledge, memorization, englishExamples }
+enum _TeacherDbType { knowledge, memorization }
 
 class _SubjectPickerPage extends StatelessWidget {
   const _SubjectPickerPage({
@@ -1528,6 +1708,40 @@ Future<Database> _initLocalDb() async {
           await db.execute(
             'ALTER TABLE local_question_knowledge ADD COLUMN is_core INTEGER NOT NULL DEFAULT 0',
           );
+        }
+      }
+      if (oldVersion < 5) {
+        await createLocalSyncTables(db);
+      }
+      if (oldVersion < 6) {
+        final cols = await db.rawQuery("PRAGMA table_info('local_question_learning_states')");
+        final hasQsid = cols.any((c) => c['name']?.toString() == 'question_supabase_id');
+        if (!hasQsid) {
+          await db.execute(
+            'ALTER TABLE local_question_learning_states ADD COLUMN question_supabase_id TEXT',
+          );
+        }
+        await db.execute('''
+          UPDATE local_question_learning_states
+          SET question_supabase_id = (
+            SELECT q.supabase_id FROM local_questions q
+            WHERE q.local_id = local_question_learning_states.question_local_id
+          )
+          WHERE question_supabase_id IS NULL OR TRIM(COALESCE(question_supabase_id, '')) = ''
+        ''');
+      }
+      if (oldVersion < 7) {
+        for (final entry in [
+          ('local_knowledge', 'dev_completed'),
+          ('local_questions', 'dev_completed'),
+        ]) {
+          final cols = await db.rawQuery("PRAGMA table_info('${entry.$1}')");
+          final has = cols.any((c) => c['name']?.toString() == entry.$2);
+          if (!has) {
+            await db.execute(
+              "ALTER TABLE ${entry.$1} ADD COLUMN ${entry.$2} INTEGER NOT NULL DEFAULT 0",
+            );
+          }
         }
       }
     },

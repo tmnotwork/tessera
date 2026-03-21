@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../sync/ensure_synced_for_local_read.dart';
 import 'four_choice_create_screen.dart';
 
 /// 四択問題一覧（教材管理から開く）
@@ -28,6 +29,8 @@ class _FourChoiceListScreenState extends State<FourChoiceListScreen> {
       _error = null;
     });
     try {
+      await ensureSyncedForLocalRead();
+      if (!mounted) return;
       final client = Supabase.instance.client;
       final rows = await client
           .from('questions')

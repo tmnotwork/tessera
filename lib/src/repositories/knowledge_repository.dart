@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../database/local_database.dart';
 import '../models/knowledge.dart';
+import '../sync/ensure_synced_for_local_read.dart';
 
 /// 知識カードの取得・保存・削除
 abstract class KnowledgeRepository {
@@ -53,6 +54,7 @@ class KnowledgeRepositorySupabase implements KnowledgeRepository {
       'display_order': item.displayOrder,
       'construction': item.construction,
       'author_comment': item.authorComment,
+      'dev_completed': item.devCompleted,
     };
     if (item.id.startsWith('local_')) {
       final inserted = await client.from('knowledge').insert(payload).select().single();
@@ -77,6 +79,38 @@ class KnowledgeRepositoryLocal implements KnowledgeRepository {
   KnowledgeRepositoryLocal(this._localDb);
 
   final LocalDatabase _localDb;
+
+  /// Supabase の科目 ID を `local_subjects.local_id` に解決する。
+  ///
+  /// 一覧が [KnowledgeListScreen] の Supabase フォールバックだけで表示されているとき、
+  /// 科目行が未同期でも保存できるようにする。
+  Future<int> _subjectLocalIdForSupabaseId(String subjectId) async {
+    final existing = await _localDb.getBySupabaseId('local_subjects', subjectId);
+    if (existing != null) return existing['local_id'] as int;
+
+    await ensureSyncedForLocalRead();
+    final afterSync = await _localDb.getBySupabaseId('local_subjects', subjectId);
+    if (afterSync != null) return afterSync['local_id'] as int;
+
+    final remote = await Supabase.instance.client.from('subjects').select().eq('id', subjectId).maybeSingle();
+    if (remote == null) {
+      throw StateError('Subject not found: $subjectId');
+    }
+    final row = Map<String, dynamic>.from(remote);
+    row['name'] = row['name']?.toString() ?? '';
+    row['display_order'] = (row['display_order'] as num?)?.toInt() ?? 0;
+    await _localDb.upsertBySupabaseId(
+      'local_subjects',
+      row,
+      businessColumns: const ['name', 'display_order'],
+      supabaseIdColumnName: 'id',
+    );
+    final resolved = await _localDb.getBySupabaseId('local_subjects', subjectId);
+    if (resolved == null) {
+      throw StateError('Subject not found: $subjectId');
+    }
+    return resolved['local_id'] as int;
+  }
 
   @override
   Future<List<Knowledge>> getBySubject(String subjectId) async {
@@ -117,14 +151,14 @@ class KnowledgeRepositoryLocal implements KnowledgeRepository {
 
   @override
   Future<Knowledge> save(Knowledge item, {required String subjectId, required String subjectName}) async {
-    int? subjectLocalId;
+    late final int subjectLocalId;
     if (subjectId.startsWith('local_')) {
-      subjectLocalId = int.tryParse(subjectId.substring(6));
+      final parsed = int.tryParse(subjectId.substring(6));
+      if (parsed == null) throw StateError('Subject not found: $subjectId');
+      subjectLocalId = parsed;
     } else {
-      final sub = await _localDb.getBySupabaseId('local_subjects', subjectId);
-      subjectLocalId = sub?['local_id'] as int?;
+      subjectLocalId = await _subjectLocalIdForSupabaseId(subjectId);
     }
-    if (subjectLocalId == null) throw StateError('Subject not found: $subjectId');
 
     if (item.id.startsWith('local_')) {
       final localIdStr = item.id.substring(6);
@@ -142,6 +176,7 @@ class KnowledgeRepositoryLocal implements KnowledgeRepository {
             'type': item.type,
             'construction': item.construction ? 1 : 0,
             'author_comment': item.authorComment,
+            'dev_completed': item.devCompleted ? 1 : 0,
           },
           where: 'local_id = ?',
           whereArgs: [localId],
@@ -155,6 +190,34 @@ class KnowledgeRepositoryLocal implements KnowledgeRepository {
     }
 
     final supabaseId = item.id.startsWith('local_') ? null : item.id;
+    if (supabaseId != null && supabaseId.isNotEmpty) {
+      final existing = await _localDb.getBySupabaseId('local_knowledge', supabaseId);
+      if (existing != null) {
+        final localId = existing['local_id'] as int;
+        await _localDb.updateWithSync(
+          'local_knowledge',
+          {
+            'subject_local_id': subjectLocalId,
+            'subject': subjectName,
+            'unit': item.unit,
+            'content': item.content,
+            'description': item.description,
+            'display_order': item.displayOrder,
+            'type': item.type,
+            'construction': item.construction ? 1 : 0,
+            'author_comment': item.authorComment,
+            'dev_completed': item.devCompleted ? 1 : 0,
+          },
+          where: 'local_id = ?',
+          whereArgs: [localId],
+        );
+        await _saveTagsForLocalKnowledge(localId, item.tags);
+        return Knowledge.fromLocal(
+          (await _localDb.getByLocalId('local_knowledge', localId))!,
+          tags: item.tags,
+        );
+      }
+    }
     final idForPush = supabaseId ?? const Uuid().v4();
     final row = {
       'subject_local_id': subjectLocalId,
@@ -166,6 +229,7 @@ class KnowledgeRepositoryLocal implements KnowledgeRepository {
       'type': item.type,
       'construction': item.construction ? 1 : 0,
       'author_comment': item.authorComment,
+      'dev_completed': item.devCompleted ? 1 : 0,
       'supabase_id': idForPush,
     };
     final id = await _localDb.insertWithSync('local_knowledge', row);

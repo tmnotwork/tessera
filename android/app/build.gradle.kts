@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -43,19 +45,30 @@ flutter {
     source = "../.."
 }
 
-// ビルド出力が LOCALAPPDATA のため、Flutter が APK を認識できるようプロジェクトの build にコピー
+// ビルド出力が LOCALAPPDATA のため、Flutter が APK を認識できるようプロジェクトの build にコピーする。
+// doLast だけだと Flutter Gradle プラグイン側の設定と順序が競り、コピーが走らないことがあるため finalizedBy で最後に実行する。
+val copyReleaseApkForFlutterCli by tasks.registering {
+    description = "Flutter CLI が探す build/app/outputs/flutter-apk/app-release.apk へ同期"
+    group = "build"
+    doLast {
+        val buildDir = layout.buildDirectory.get().asFile
+        val flutterApk = File(buildDir, "outputs/flutter-apk/app-release.apk")
+        val agpApk = File(buildDir, "outputs/apk/release/app-release.apk")
+        val src = when {
+            flutterApk.isFile -> flutterApk
+            agpApk.isFile -> agpApk
+            else -> throw org.gradle.api.GradleException(
+                "Release APK が見つかりません: $flutterApk または $agpApk"
+            )
+        }
+        val destDir = File(rootProject.projectDir.parentFile, "build/app/outputs/flutter-apk")
+        destDir.mkdirs()
+        src.copyTo(File(destDir, "app-release.apk"), overwrite = true)
+    }
+}
+
 afterEvaluate {
     tasks.named("assembleRelease").configure {
-        doLast {
-            val apkSource = layout.buildDirectory.file("outputs/flutter-apk/app-release.apk").get().asFile
-            if (apkSource.exists()) {
-                val destDir = rootProject.file("../../build/app/outputs/flutter-apk")
-                if (!destDir.exists()) destDir.mkdirs()
-                project.copy {
-                    from(apkSource)
-                    into(destDir)
-                }
-            }
-        }
+        finalizedBy(copyReleaseApkForFlutterCli)
     }
 }

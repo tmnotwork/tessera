@@ -1,7 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 /// ローカルDBのバージョン（双方向同期用スキーマ）
-const int kLocalDbVersion = 4;
+const int kLocalDbVersion = 7;
 
 /// 既存の knowledge_local はバージョン2で作成。バージョン3で local_* テーブルを追加。
 Future<void> createLocalSyncTables(Database db) async {
@@ -39,6 +39,7 @@ Future<void> createLocalSyncTables(Database db) async {
       type TEXT DEFAULT 'grammar',
       construction INTEGER NOT NULL DEFAULT 0,
       author_comment TEXT,
+      dev_completed INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (subject_local_id) REFERENCES local_subjects(local_id)
     )
   ''');
@@ -81,6 +82,7 @@ Future<void> createLocalSyncTables(Database db) async {
       explanation TEXT,
       reference TEXT,
       choices TEXT,
+      dev_completed INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (knowledge_local_id) REFERENCES local_knowledge(local_id)
     )
   ''');
@@ -162,8 +164,60 @@ Future<void> createLocalSyncTables(Database db) async {
     )
   ''');
 
+  // 11) 四択解答ログ
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS local_question_answer_logs (
+      local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supabase_id TEXT UNIQUE,
+      dirty INTEGER NOT NULL DEFAULT 1,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      synced_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      learner_id TEXT NOT NULL,
+      question_local_id INTEGER NOT NULL,
+      selected_choice_text TEXT,
+      selected_index INTEGER,
+      is_correct INTEGER NOT NULL DEFAULT 0,
+      answered_at TEXT NOT NULL,
+      FOREIGN KEY (question_local_id) REFERENCES local_questions(local_id)
+    )
+  ''');
+
+  // 12) 四択学習状態（忘却曲線）
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS local_question_learning_states (
+      local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supabase_id TEXT UNIQUE,
+      dirty INTEGER NOT NULL DEFAULT 1,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      synced_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      learner_id TEXT NOT NULL,
+      question_local_id INTEGER NOT NULL,
+      question_supabase_id TEXT,
+      stability REAL NOT NULL DEFAULT 1.0,
+      difficulty REAL NOT NULL DEFAULT 0.5,
+      retrievability REAL NOT NULL DEFAULT 0.5,
+      success_streak INTEGER NOT NULL DEFAULT 0,
+      lapse_count INTEGER NOT NULL DEFAULT 0,
+      reviewed_count INTEGER NOT NULL DEFAULT 0,
+      last_is_correct INTEGER,
+      last_selected_choice_text TEXT,
+      last_selected_index INTEGER,
+      last_review_at TEXT,
+      next_review_at TEXT NOT NULL,
+      FOREIGN KEY (question_local_id) REFERENCES local_questions(local_id),
+      UNIQUE (learner_id, question_local_id)
+    )
+  ''');
+
   // インデックス（supabase_id 照合用）
   await db.execute('CREATE INDEX IF NOT EXISTS ix_local_knowledge_supabase_id ON local_knowledge(supabase_id)');
   await db.execute('CREATE INDEX IF NOT EXISTS ix_local_subjects_supabase_id ON local_subjects(supabase_id)');
   await db.execute('CREATE INDEX IF NOT EXISTS ix_local_questions_supabase_id ON local_questions(supabase_id)');
+  await db.execute('CREATE INDEX IF NOT EXISTS ix_local_question_answer_logs_supabase_id ON local_question_answer_logs(supabase_id)');
+  await db.execute('CREATE INDEX IF NOT EXISTS ix_local_question_learning_states_supabase_id ON local_question_learning_states(supabase_id)');
+  await db.execute('CREATE INDEX IF NOT EXISTS ix_local_question_learning_states_due ON local_question_learning_states(learner_id, next_review_at)');
 }
