@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../app_scope.dart';
 import '../models/knowledge.dart';
 import '../supabase/question_learning_state_remote.dart';
 import '../sync/ensure_synced_for_local_read.dart';
@@ -41,6 +42,10 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
   int? _selectedIndex;
   bool _answered = false;
   Future<void>? _pendingSave;
+  bool _showManageEdit = false;
+
+  /// 教師用一覧モード、または学習者で profiles.user_id が「教師」の特権プレビュー用 ID。
+  bool get _showQuestionEditButton => !widget.isLearnerMode || _showManageEdit;
 
   List<String> get _currentChoices {
     if (_choices.isNotEmpty) return _choices;
@@ -53,6 +58,23 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
   void initState() {
     super.initState();
     _loadQuestion();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (await shouldShowLearnerFlowManageShortcut()) {
+        setState(() => _showManageEdit = true);
+      }
+    });
+  }
+
+  Future<void> _openQuestionEditor() async {
+    if (_index >= widget.questionIds.length) return;
+    final questionId = widget.questionIds[_index];
+    final updated = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (context) => FourChoiceCreateScreen(questionId: questionId),
+      ),
+    );
+    if (updated == true && mounted) _loadQuestion();
   }
 
   Future<void> _loadQuestion() async {
@@ -419,17 +441,117 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
     return remoteId != null;
   }
 
+  /// 学習者モードの四択では、解答するまで次の問題／終了へ進めない。
+  bool _canAdvanceToNextOrFinish(List<String> choices) {
+    if (!widget.isLearnerMode) return true;
+    if (choices.length < 2) return true;
+    return _answered;
+  }
+
+  Widget? _buildBottomNavigationBar(BuildContext context) {
+    if (_loading || _error != null || _question == null) return null;
+    final choices = _currentChoices;
+    final canAdvance = _canAdvanceToNextOrFinish(choices);
+    final theme = Theme.of(context);
+
+    Future<void> goPrev() async {
+      await _waitPendingSave();
+      if (!mounted) return;
+      setState(() {
+        _index--;
+        _answered = false;
+        _selectedIndex = null;
+      });
+      _loadQuestion();
+    }
+
+    Future<void> goNext() async {
+      await _waitPendingSave();
+      if (!mounted) return;
+      setState(() {
+        _index++;
+        _answered = false;
+        _selectedIndex = null;
+      });
+      _loadQuestion();
+    }
+
+    Future<void> finish() async {
+      await _waitPendingSave();
+      if (!context.mounted) return;
+      Navigator.of(context).pop();
+    }
+
+    final hasPrev = _index > 0;
+    final hasNext = _index < widget.questionIds.length - 1;
+
+    return Material(
+      elevation: 8,
+      color: theme.colorScheme.surfaceContainerLow,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+          child: Row(
+            children: [
+              if (hasPrev)
+                TextButton.icon(
+                  onPressed: goPrev,
+                  icon: const Icon(Icons.chevron_left),
+                  label: const Text('前の問題'),
+                )
+              else
+                const SizedBox(width: 8),
+              const Spacer(),
+              if (hasNext)
+                FilledButton.icon(
+                  onPressed: canAdvance ? goNext : null,
+                  icon: const Icon(Icons.chevron_right),
+                  label: const Text('次の問題'),
+                )
+              else
+                FilledButton.icon(
+                  onPressed: canAdvance ? finish : null,
+                  icon: const Icon(Icons.menu_book),
+                  label: const Text('知識に戻る'),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
       return Scaffold(
-        appBar: AppBar(title: Text('問題（${_index + 1}/${widget.questionIds.length}）')),
+        appBar: AppBar(
+          title: Text('問題（${_index + 1}/${widget.questionIds.length}）'),
+          actions: [
+            if (_showQuestionEditButton)
+              IconButton(
+                icon: const Icon(Icons.edit),
+                tooltip: 'この問題を編集',
+                onPressed: _openQuestionEditor,
+              ),
+          ],
+        ),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
     if (_error != null || _question == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('問題')),
+        appBar: AppBar(
+          title: const Text('問題'),
+          actions: [
+            if (_showQuestionEditButton)
+              IconButton(
+                icon: const Icon(Icons.edit),
+                tooltip: 'この問題を編集',
+                onPressed: _openQuestionEditor,
+              ),
+          ],
+        ),
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -459,7 +581,8 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () async {
             await _waitPendingSave();
-            if (mounted) Navigator.of(context).pop();
+            if (!context.mounted) return;
+            Navigator.of(context).pop();
           },
         ),
         title: Column(
@@ -472,21 +595,15 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.edit),
-            tooltip: 'この問題を編集',
-            onPressed: () async {
-              final questionId = widget.questionIds[_index];
-              final updated = await Navigator.of(context).push<bool>(
-                MaterialPageRoute(
-                  builder: (context) => FourChoiceCreateScreen(questionId: questionId),
-                ),
-              );
-              if (updated == true && mounted) _loadQuestion();
-            },
-          ),
+          if (_showQuestionEditButton)
+            IconButton(
+              icon: const Icon(Icons.edit),
+              tooltip: 'この問題を編集',
+              onPressed: _openQuestionEditor,
+            ),
         ],
       ),
+      bottomNavigationBar: _buildBottomNavigationBar(context),
       body: SingleChildScrollView(
         key: ValueKey<String>(widget.questionIds[_index]),
         padding: const EdgeInsets.all(16),
@@ -844,50 +961,8 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                 }),
               ],
             ],
-            const SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                if (_index > 0)
-                  TextButton.icon(
-                    onPressed: () async {
-                      await _waitPendingSave();
-                      setState(() {
-                        _index--;
-                        _answered = false;
-                        _selectedIndex = null;
-                      });
-                      _loadQuestion();
-                    },
-                    icon: const Icon(Icons.chevron_left),
-                    label: const Text('前の問題'),
-                  )
-                else const SizedBox.shrink(),
-                if (_index < widget.questionIds.length - 1)
-                  FilledButton.icon(
-                    onPressed: () async {
-                      await _waitPendingSave();
-                      setState(() {
-                        _index++;
-                        _answered = false;
-                        _selectedIndex = null;
-                      });
-                      _loadQuestion();
-                    },
-                    icon: const Icon(Icons.chevron_right),
-                    label: const Text('次の問題'),
-                  )
-                else
-                  FilledButton.icon(
-                    onPressed: () async {
-                      await _waitPendingSave();
-                      if (mounted) Navigator.of(context).pop();
-                    },
-                    icon: const Icon(Icons.menu_book),
-                    label: const Text('知識に戻る'),
-                  ),
-              ],
-            ),
+            // 前へ／次へは bottomNavigationBar に固定（解答後も常に操作しやすい）
+            SizedBox(height: MediaQuery.paddingOf(context).bottom + 72),
           ],
         ),
         ),

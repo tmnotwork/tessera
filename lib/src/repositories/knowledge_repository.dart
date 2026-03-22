@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../database/local_database.dart';
 import '../models/knowledge.dart';
+import '../supabase/knowledge_supabase_delete_verify.dart';
 import '../sync/ensure_synced_for_local_read.dart';
 
 /// 知識カードの取得・保存・削除
@@ -70,7 +71,8 @@ class KnowledgeRepositorySupabase implements KnowledgeRepository {
   @override
   Future<void> delete(String id) async {
     if (id.startsWith('local_')) return;
-    await Supabase.instance.client.from('knowledge').delete().eq('id', id);
+    final r = await hardDeleteKnowledgeOnSupabaseWithSelect(Supabase.instance.client, id);
+    if (!r.ok) throw StateError(r.message);
   }
 }
 
@@ -254,15 +256,21 @@ class KnowledgeRepositoryLocal implements KnowledgeRepository {
   Future<void> delete(String id) async {
     if (id.startsWith('local_')) {
       final localId = int.tryParse(id.substring(6));
-      if (localId != null && localId > 0) {
-        await _localDb.softDelete('local_knowledge', localId);
+      if (localId == null || localId <= 0) {
+        throw StateError('無効なローカル id: $id');
       }
+      final n = await _localDb.softDelete('local_knowledge', localId);
+      if (n == 0) throw StateError('ローカルに該当カードがありません（$id）');
       return;
     }
     final row = await _localDb.getBySupabaseId('local_knowledge', id);
     if (row != null) {
-      await _localDb.softDelete('local_knowledge', row['local_id'] as int);
+      final n = await _localDb.softDelete('local_knowledge', row['local_id'] as int);
+      if (n == 0) throw StateError('ローカル削除に失敗しました（$id）');
+      return;
     }
+    final report = await softDeleteKnowledgeOnSupabaseWithSelect(Supabase.instance.client, id);
+    if (!report.ok) throw StateError(report.message);
   }
 }
 

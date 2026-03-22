@@ -50,6 +50,7 @@
     "topic": "仮定法",
     "order": 5,
     "title": "仮定法過去（未来の妄想）",
+    "construction": true,
     "tags": [
       "基本"
     ],

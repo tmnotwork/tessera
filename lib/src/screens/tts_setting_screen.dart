@@ -14,11 +14,14 @@ class TtsSettingScreen extends StatefulWidget {
 }
 
 class _TtsSettingScreenState extends State<TtsSettingScreen> {
-  double _jaSpeed = 0.5;
+  double _jaSpeed = 0.9;
   double _enSpeed = 0.4;
-  int _answerRepeatCount = 1;
+  int _answerRepeatCount = 3;
   int _answerPauseSeconds = 3;
   bool _randomPlayback = false;
+  LoopMode _loopMode = LoopMode.none;
+  bool _reversePlayback = false;
+  bool _focusedMemorization = false;
   bool _loaded = false;
 
   @override
@@ -32,9 +35,25 @@ class _TtsSettingScreenState extends State<TtsSettingScreen> {
         _answerRepeatCount = TtsService.answerRepeatCount;
         _answerPauseSeconds = TtsService.answerPauseSeconds;
         _randomPlayback = TtsService.randomPlayback;
+        _loopMode = TtsService.loopMode;
+        _reversePlayback = TtsService.reversePlayback;
+        _focusedMemorization = TtsService.focusedMemorization;
         _loaded = true;
       });
     });
+  }
+
+  String _loopModeLabel(LoopMode m) {
+    switch (m) {
+      case LoopMode.none:
+        return 'ループなし';
+      case LoopMode.once:
+        return '一周ループ';
+      case LoopMode.all:
+        return '全てループ';
+      case LoopMode.single:
+        return '単一カードループ';
+    }
   }
 
   @override
@@ -107,8 +126,8 @@ class _TtsSettingScreenState extends State<TtsSettingScreen> {
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('回答後のポーズ時間'),
-                  subtitle: Text('$_answerPauseSeconds 秒'),
+                  title: const Text('読み上げ回答時間'),
+                  subtitle: Text('質問読み上げ後、答えを表示するまで $_answerPauseSeconds 秒待ちます'),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -149,6 +168,51 @@ class _TtsSettingScreenState extends State<TtsSettingScreen> {
                   onChanged: (v) {
                     setState(() => _randomPlayback = v);
                     TtsService.setRandomPlayback(v);
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('ループモード'),
+                  subtitle: Text(_loopModeLabel(_loopMode)),
+                  trailing: SizedBox(
+                    width: 168,
+                    child: DropdownButton<LoopMode>(
+                      isExpanded: true,
+                      value: _loopMode,
+                      items: LoopMode.values
+                          .map(
+                            (m) => DropdownMenuItem(
+                              value: m,
+                              child: Text(_loopModeLabel(m)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (m) {
+                        if (m == null) return;
+                        setState(() => _loopMode = m);
+                        TtsService.setLoopMode(m);
+                      },
+                    ),
+                  ),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('逆出題'),
+                  subtitle: const Text('英語を先に読み、日本語を答えとして読み上げます'),
+                  value: _reversePlayback,
+                  onChanged: (v) {
+                    setState(() => _reversePlayback = v);
+                    TtsService.setReversePlayback(v);
+                  },
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('集中暗記'),
+                  subtitle: const Text('連続正解回数が1以下の例文のみ出題します'),
+                  value: _focusedMemorization,
+                  onChanged: (v) {
+                    setState(() => _focusedMemorization = v);
+                    TtsService.setFocusedMemorization(v);
                   },
                 ),
                 const SizedBox(height: 16),

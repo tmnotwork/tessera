@@ -171,4 +171,72 @@ class LocalDatabase {
     );
     return rows.isNotEmpty ? rows.first : null;
   }
+
+  /// 当科目に属し `deleted=1` かつ `supabase_id` がある知識のリモート ID。
+  /// 一覧マージでリモートのみの行を足すとき、削除直後に同じカードを復活させないため。
+  Future<Set<String>> deletedKnowledgeSupabaseIdsForSubject(String subjectId) async {
+    int? subjectLocalId;
+    if (subjectId.startsWith('local_')) {
+      final parsed = int.tryParse(subjectId.substring(6));
+      if (parsed == null || parsed < 0) return {};
+      subjectLocalId = parsed;
+    } else {
+      final subRows = await _db.query(
+        LocalTable.subjects,
+        columns: ['local_id'],
+        where: 'supabase_id = ?',
+        whereArgs: [subjectId],
+      );
+      if (subRows.isEmpty) return {};
+      subjectLocalId = subRows.first['local_id'] as int;
+    }
+    final rows = await _db.query(
+      LocalTable.knowledge,
+      columns: ['supabase_id'],
+      where: 'subject_local_id = ? AND deleted = ?',
+      whereArgs: [subjectLocalId, 1],
+    );
+    final out = <String>{};
+    for (final r in rows) {
+      final id = r['supabase_id'] as String?;
+      if (id != null && id.isNotEmpty) out.add(id);
+    }
+    return out;
+  }
+
+  /// ローカルでソフト削除済み（`deleted=1`）かつ `supabase_id` がある全知識のリモート ID。
+  ///
+  /// 一覧マージで Supabase から行を足すとき、科目行の有無や `subject_local_id` の状態に依存せず
+  /// **削除済みを復活させない**ために使う（[deletedKnowledgeSupabaseIdsForSubject] より確実）。
+  Future<Set<String>> allDeletedKnowledgeRemoteIds() async {
+    final rows = await _db.query(
+      LocalTable.knowledge,
+      columns: ['supabase_id'],
+      where: 'deleted = ?',
+      whereArgs: [1],
+    );
+    final out = <String>{};
+    for (final r in rows) {
+      final id = r['supabase_id'] as String?;
+      if (id != null && id.isNotEmpty) out.add(id);
+    }
+    return out;
+  }
+
+  /// `subject_local_id` が未設定のまま削除された知識のリモート ID（マージ除外用）。
+  /// 科目スコープのクエリに載らないため、[deletedKnowledgeSupabaseIdsForSubject] と併用する。
+  Future<Set<String>> deletedKnowledgeSupabaseIdsWithNullSubjectLocal() async {
+    final rows = await _db.query(
+      LocalTable.knowledge,
+      columns: ['supabase_id'],
+      where: 'deleted = ? AND subject_local_id IS NULL',
+      whereArgs: [1],
+    );
+    final out = <String>{};
+    for (final r in rows) {
+      final id = r['supabase_id'] as String?;
+      if (id != null && id.isNotEmpty) out.add(id);
+    }
+    return out;
+  }
 }

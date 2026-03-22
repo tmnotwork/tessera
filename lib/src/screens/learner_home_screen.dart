@@ -8,14 +8,13 @@ import '../database/local_database.dart';
 import '../sync/ensure_synced_for_local_read.dart';
 import '../widgets/force_sync_icon_button.dart';
 import 'english_example_list_screen.dart';
-import 'four_choice_progress_screen.dart';
+import 'learner_learning_status_menu_screen.dart';
 import 'knowledge_list_screen.dart';
-import 'memorization_list_screen.dart';
 import 'question_solve_screen.dart';
 import 'settings_screen.dart';
 
 /// 学習者向けホーム画面
-/// 知識を学ぶ / 四択問題を解く / 暗記カード の入口
+/// 知識を学ぶ / 四択・例文などの入口（暗記カードメニューは一時非表示）
 class LearnerHomeScreen extends StatefulWidget {
   const LearnerHomeScreen({
     super.key,
@@ -97,7 +96,7 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
         builder: (context) => _LearnerSubjectPicker(
           subjects: _subjects,
           title: '知識を学ぶ',
-          mode: _LearnerPickMode.knowledge,
+          localDatabase: widget.localDatabase,
         ),
       ),
     );
@@ -111,23 +110,10 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
     );
   }
 
-  void _openFourChoiceProgress() {
+  void _openLearningStatusMenu() {
     _learnerPush(
       MaterialPageRoute(
-        builder: (context) => const FourChoiceProgressScreen(),
-      ),
-    );
-  }
-
-  void _openMemorizationPicker() {
-    _learnerPush(
-      MaterialPageRoute(
-        builder: (context) => _LearnerSubjectPicker(
-          subjects: _subjects,
-          title: '暗記カード',
-          mode: _LearnerPickMode.memorization,
-          localDatabase: widget.localDatabase,
-        ),
+        builder: (context) => const LearnerLearningStatusMenuScreen(),
       ),
     );
   }
@@ -137,6 +123,7 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
       MaterialPageRoute(
         builder: (context) => const EnglishExampleListScreen(
           isLearnerMode: true,
+          readAloudMenuOnly: true,
         ),
       ),
     );
@@ -221,23 +208,14 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
                     ),
                     const SizedBox(height: 12),
                     _MenuCard(
-                      icon: Icons.grid_view,
-                      title: '四択の暗記状況',
-                      subtitle: '単元ごとの暗記状況を色で確認する',
-                      onTap: _openFourChoiceProgress,
-                    ),
-                    const SizedBox(height: 12),
-                    _MenuCard(
-                      icon: Icons.style,
-                      title: '暗記カード',
-                      subtitle: '表・裏の暗記カードで覚える',
-                      onTap: _openMemorizationPicker,
+                      icon: Icons.insights_outlined,
+                      title: '学習状況の確認',
+                      onTap: _openLearningStatusMenu,
                     ),
                     const SizedBox(height: 12),
                     _MenuCard(
                       icon: Icons.translate,
                       title: '英語例文',
-                      subtitle: '日本語から英語を思い出す（解説・補足付き）',
                       onTap: _openEnglishExamples,
                     ),
                   ],
@@ -297,32 +275,56 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
   }
 }
 
-enum _LearnerPickMode { knowledge, memorization }
-
-class _LearnerSubjectPicker extends StatelessWidget {
+class _LearnerSubjectPicker extends StatefulWidget {
   const _LearnerSubjectPicker({
     required this.subjects,
     required this.title,
-    required this.mode,
     this.localDatabase,
   });
 
   final List<Map<String, dynamic>> subjects;
   final String title;
-  final _LearnerPickMode mode;
   final LocalDatabase? localDatabase;
+
+  @override
+  State<_LearnerSubjectPicker> createState() => _LearnerSubjectPickerState();
+}
+
+class _LearnerSubjectPickerState extends State<_LearnerSubjectPicker> {
+  bool _showManageEdit = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (await shouldShowLearnerFlowManageShortcut()) {
+        setState(() => _showManageEdit = true);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(title)),
-      body: subjects.isEmpty
+      appBar: AppBar(
+        title: Text(widget.title),
+        actions: [
+          if (_showManageEdit)
+            IconButton(
+              icon: const Icon(Icons.edit),
+              tooltip: '教材を編集',
+              onPressed: () => openManageNotifier.openManage?.call(context),
+            ),
+        ],
+      ),
+      body: widget.subjects.isEmpty
           ? const Center(child: Text('科目がありません'))
           : ListView.separated(
-              itemCount: subjects.length,
+              itemCount: widget.subjects.length,
               separatorBuilder: (context, index) => const Divider(height: 1),
               itemBuilder: (context, index) {
-                final s = subjects[index];
+                final s = widget.subjects[index];
                 final subjectId = s['id'] as String?;
                 final subjectName = s['name']?.toString() ?? '科目';
                 if (subjectId == null) return const SizedBox.shrink();
@@ -330,27 +332,16 @@ class _LearnerSubjectPicker extends StatelessWidget {
                   title: Text(subjectName),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () {
-                    if (mode == _LearnerPickMode.knowledge) {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => KnowledgeListScreen(
-                            subjectId: subjectId,
-                            subjectName: subjectName,
-                            localDatabase: localDatabase,
-                            isLearnerMode: true,
-                          ),
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => KnowledgeListScreen(
+                          subjectId: subjectId,
+                          subjectName: subjectName,
+                          localDatabase: widget.localDatabase,
+                          isLearnerMode: true,
                         ),
-                      );
-                    } else if (mode == _LearnerPickMode.memorization) {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => MemorizationListScreen(
-                            subjectId: subjectId,
-                            subjectName: subjectName,
-                          ),
-                        ),
-                      );
-                    }
+                      ),
+                    );
                   },
                 );
               },
@@ -370,16 +361,23 @@ class LearnerFourChoiceSolveScreen extends StatefulWidget {
 class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScreen> with RouteAware, WidgetsBindingObserver {
   List<String> _questionIds = [];
   Map<String, List<_QuestionTileItem>> _groupedTiles = {};
-  int _dueCount = 0;
+  final Set<String> _expandedChapters = {};
   bool _loading = true;
   String? _error;
   bool _routeSubscribed = false;
+  bool _showManageEdit = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (await shouldShowLearnerFlowManageShortcut()) {
+        setState(() => _showManageEdit = true);
+      }
+    });
   }
 
   @override
@@ -482,22 +480,29 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
           .cast<String>()
           .toSet()
           .toList();
-      final knowledgeNameById = <String, String>{};
+      final knowledgeMetaById = <String, _KnowledgeMeta>{};
       if (knowledgeIds.isNotEmpty) {
         try {
           final knowledgeRows = await client
               .from('knowledge')
-              .select('id, unit, content')
+              .select('id, unit, content, display_order')
               .inFilter('id', knowledgeIds);
           for (final raw in knowledgeRows as List) {
             final row = raw as Map<String, dynamic>;
             final id = row['id']?.toString();
             if (id == null || id.isEmpty) continue;
             final unit = row['unit']?.toString().trim();
-            final title = row['content']?.toString().trim();
-            knowledgeNameById[id] = (unit != null && unit.isNotEmpty)
-                ? unit
-                : ((title != null && title.isNotEmpty) ? title : 'その他');
+            final chapterKey =
+                (unit != null && unit.isNotEmpty) ? unit : '（単元なし）';
+            final content = row['content']?.toString().trim();
+            final cardTitle =
+                (content != null && content.isNotEmpty) ? content : '（無題）';
+            final displayOrder = (row['display_order'] as num?)?.toInt();
+            knowledgeMetaById[id] = _KnowledgeMeta(
+              chapterKey: chapterKey,
+              cardTitle: cardTitle,
+              displayOrder: displayOrder,
+            );
           }
         } catch (_) {}
       }
@@ -512,20 +517,51 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
         final qid = q['id']?.toString();
         if (qid == null || qid.isEmpty) continue;
         final knowledgeId = q['knowledge_id']?.toString();
-        final unit = knowledgeId != null && knowledgeNameById.containsKey(knowledgeId)
-            ? knowledgeNameById[knowledgeId]!
-            : 'その他';
+        final meta = (knowledgeId != null &&
+                knowledgeMetaById.containsKey(knowledgeId))
+            ? knowledgeMetaById[knowledgeId]!
+            : const _KnowledgeMeta(
+                chapterKey: '（単元なし）',
+                cardTitle: '（紐づけなし）',
+                displayOrder: null,
+              );
         final state = stateByQuestion[qid];
         final status = _tileStatusFromState(state);
-        grouped.putIfAbsent(unit, () => []).add(
+        grouped.putIfAbsent(meta.chapterKey, () => []).add(
               _QuestionTileItem(
                 questionId: qid,
                 status: status,
+                cardTitle: meta.cardTitle,
+                displayOrder: meta.displayOrder,
               ),
             );
       }
+      for (final list in grouped.values) {
+        list.sort((a, b) {
+          final ao = a.displayOrder ?? 1 << 30;
+          final bo = b.displayOrder ?? 1 << 30;
+          if (ao != bo) return ao.compareTo(bo);
+          return a.cardTitle.compareTo(b.cardTitle);
+        });
+      }
+      int chapterOrder(String chapter) {
+        final list = grouped[chapter];
+        if (list == null || list.isEmpty) return 1 << 30;
+        var m = 1 << 30;
+        for (final item in list) {
+          final o = item.displayOrder ?? (1 << 29);
+          if (o < m) m = o;
+        }
+        return m;
+      }
+
       final sortedGrouped = <String, List<_QuestionTileItem>>{};
-      final keys = grouped.keys.toList()..sort();
+      final keys = grouped.keys.toList()
+        ..sort((a, b) {
+          final c = chapterOrder(a).compareTo(chapterOrder(b));
+          if (c != 0) return c;
+          return a.compareTo(b);
+        });
       for (final k in keys) {
         sortedGrouped[k] = grouped[k]!;
       }
@@ -533,9 +569,8 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
       if (mounted) {
         setState(() {
           _questionIds = ordered;
-          _dueCount = dueUnique.length;
           _groupedTiles = sortedGrouped;
-          // _error は先頭で null に済ませる。学習状態取得失敗時は inner catch でだけセットし、ここで消さない。
+          _expandedChapters.removeWhere((k) => !sortedGrouped.containsKey(k));
         });
       }
     } catch (e) {
@@ -553,6 +588,25 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
         builder: (context) => QuestionSolveScreen(
           questionIds: _questionIds,
           knowledgeTitle: '四択問題',
+          isLearnerMode: true,
+        ),
+      ),
+    )
+        .then((_) {
+      if (mounted) _load();
+    });
+  }
+
+  void _startChapterSolve(String chapterKey) {
+    final tiles = _groupedTiles[chapterKey];
+    if (tiles == null || tiles.isEmpty) return;
+    final ids = tiles.map((t) => t.questionId).toList();
+    Navigator.of(context)
+        .push(
+      MaterialPageRoute(
+        builder: (context) => QuestionSolveScreen(
+          questionIds: ids,
+          knowledgeTitle: chapterKey,
           isLearnerMode: true,
         ),
       ),
@@ -585,17 +639,37 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
     return now.isAfter(nextReviewAt) ? _TileStatus.notRemembered : _TileStatus.remembered;
   }
 
-  Color _tileColor(BuildContext context, _TileStatus status) {
-    final scheme = Theme.of(context).colorScheme;
+  String _statusLabel(_TileStatus status) {
     switch (status) {
-      case _TileStatus.remembered:
-        return Colors.green.shade300;
-      case _TileStatus.notRemembered:
-        return Colors.red.shade300;
       case _TileStatus.unseen:
-        // surface 単色だと背景と同化するため、わずかに浮かせる
-        return scheme.surfaceContainerHighest;
+        return '未挑戦';
+      case _TileStatus.remembered:
+        return '覚えている';
+      case _TileStatus.notRemembered:
+        return '要復習';
     }
+  }
+
+  /// 一覧ではマーク表示。長押し／ホバーで文言（ツールチップ）。
+  Widget _statusMark(BuildContext context, _TileStatus status) {
+    final scheme = Theme.of(context).colorScheme;
+    final IconData icon;
+    final Color color;
+    switch (status) {
+      case _TileStatus.unseen:
+        icon = Icons.radio_button_unchecked;
+        color = scheme.outline;
+      case _TileStatus.remembered:
+        icon = Icons.check_circle;
+        color = Colors.green.shade700;
+      case _TileStatus.notRemembered:
+        icon = Icons.error_outline;
+        color = scheme.error;
+    }
+    return Tooltip(
+      message: _statusLabel(status),
+      child: Icon(icon, size: 22, color: color),
+    );
   }
 
   @override
@@ -604,6 +678,12 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
       appBar: AppBar(
         title: const Text('四択問題を解く'),
         actions: [
+          if (_showManageEdit)
+            IconButton(
+              icon: const Icon(Icons.edit),
+              tooltip: '教材を編集',
+              onPressed: () => openManageNotifier.openManage?.call(context),
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loading ? null : _load,
@@ -646,69 +726,95 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
                       ),
                     )
                   : ListView(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.fromLTRB(0, 16, 0, 24),
                       children: [
-                        Text(
-                          '${_questionIds.length} 問（復習期限: $_dueCount 問）',
-                          style: Theme.of(context).textTheme.titleMedium,
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: FilledButton.icon(
+                            onPressed: _startSolve,
+                            icon: const Icon(Icons.play_arrow),
+                            label: const Text('全問題を解く'),
+                          ),
                         ),
-                        const SizedBox(height: 12),
-                        FilledButton.icon(
-                          onPressed: _startSolve,
-                          icon: const Icon(Icons.play_arrow),
-                          label: const Text('全問題を解く'),
-                        ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 8),
                         ..._groupedTiles.entries.map((entry) {
-                          final unit = entry.key;
+                          final chapter = entry.key;
                           final tiles = entry.value;
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 20),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  unit,
-                                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                ),
-                                const SizedBox(height: 8),
-                                Wrap(
-                                  spacing: 2,
-                                  runSpacing: 2,
-                                  children: tiles.map((item) {
-                                    return InkWell(
-                                      onTap: () async {
-                                        await Navigator.of(context).push(
-                                          MaterialPageRoute(
-                                            builder: (context) => QuestionSolveScreen(
-                                              questionIds: [item.questionId],
-                                              knowledgeTitle: unit,
-                                              isLearnerMode: true,
-                                            ),
+                          final expanded = _expandedChapters.contains(chapter);
+                          return Column(
+                            key: PageStorageKey<String>('four_choice_chapter_$chapter'),
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Expanded(
+                                      child: InkWell(
+                                        onTap: () => _startChapterSolve(chapter),
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 12,
                                           ),
-                                        );
-                                        if (mounted) _load();
-                                      },
-                                      borderRadius: BorderRadius.circular(6),
-                                      child: Container(
-                                        width: 28,
-                                        height: 28,
-                                        decoration: BoxDecoration(
-                                          color: _tileColor(context, item.status),
-                                          borderRadius: BorderRadius.circular(6),
-                                          border: Border.all(
-                                            color: Theme.of(context).colorScheme.outline,
-                                            width: 1.5,
+                                          child: Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: Text(
+                                              chapter,
+                                              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    );
-                                  }).toList(),
+                                    ),
+                                    TextButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          if (expanded) {
+                                            _expandedChapters.remove(chapter);
+                                          } else {
+                                            _expandedChapters.add(chapter);
+                                          }
+                                        });
+                                      },
+                                      child: Text(expanded ? '閉じる' : '開く'),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
+                              ),
+                              if (expanded)
+                                ...tiles.map(
+                                  (item) => ListTile(
+                                    contentPadding: const EdgeInsets.only(
+                                      left: 24,
+                                      right: 16,
+                                    ),
+                                    title: Text(
+                                      item.cardTitle,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    trailing: _statusMark(context, item.status),
+                                    onTap: () async {
+                                      await Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (context) => QuestionSolveScreen(
+                                            questionIds: [item.questionId],
+                                            knowledgeTitle: item.cardTitle,
+                                            isLearnerMode: true,
+                                          ),
+                                        ),
+                                      );
+                                      if (mounted) _load();
+                                    },
+                                  ),
+                                ),
+                              const Divider(height: 1),
+                            ],
                           );
                         }),
                       ],
@@ -719,27 +825,43 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
 
 enum _TileStatus { unseen, notRemembered, remembered }
 
+class _KnowledgeMeta {
+  const _KnowledgeMeta({
+    required this.chapterKey,
+    required this.cardTitle,
+    this.displayOrder,
+  });
+
+  final String chapterKey;
+  final String cardTitle;
+  final int? displayOrder;
+}
+
 class _QuestionTileItem {
   const _QuestionTileItem({
     required this.questionId,
     required this.status,
+    required this.cardTitle,
+    this.displayOrder,
   });
 
   final String questionId;
   final _TileStatus status;
+  final String cardTitle;
+  final int? displayOrder;
 }
 
 class _MenuCard extends StatelessWidget {
   const _MenuCard({
     required this.icon,
     required this.title,
-    required this.subtitle,
+    this.subtitle,
     required this.onTap,
   });
 
   final IconData icon;
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final VoidCallback onTap;
 
   @override
@@ -778,13 +900,15 @@ class _MenuCard extends StatelessWidget {
                       title,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                    ),
+                    if (subtitle != null && subtitle!.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle!,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                    ],
                   ],
                 ),
               ),

@@ -6,8 +6,14 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'teacher_signup_gate.dart';
 
 /// 教材管理画面へ遷移するコールバックを保持。
-/// main の RootScaffold が build 時に set し、QuestionSolveScreen の編集ボタン等が呼び出す。
+/// main の RootScaffold が build 時に set し、教師の学習タブ・特権学習者 ID・QuestionSolveScreen の編集等が呼び出す。
 final openManageNotifier = _OpenManageNotifier();
+
+/// 学習者のショートログインID（profiles.user_id）がこの値のとき、学習メニューから教材管理タブへ遷移できる。
+const kLearnerShortIdWithManageShortcut = '教師';
+
+bool learnerProfileUserIdShowsManageShortcut(String? profileUserId) =>
+    profileUserId != null && profileUserId == kLearnerShortIdWithManageShortcut;
 
 class _OpenManageNotifier {
   void Function(BuildContext context)? openManage;
@@ -22,12 +28,16 @@ class AppAuthNotifier {
   bool get isLoggedIn => currentUser != null;
 
   String? _cachedRole;
+  bool _profileUserIdLoaded = false;
+  String? _profileUserId;
   StreamSubscription<AuthState>? _sub;
   void Function()? _listener;
 
   void init() {
     _sub = Supabase.instance.client.auth.onAuthStateChange.listen((_) {
       _cachedRole = null;
+      _profileUserIdLoaded = false;
+      _profileUserId = null;
       _listener?.call();
     });
   }
@@ -61,6 +71,37 @@ class AppAuthNotifier {
       }());
     }
     return _cachedRole;
+  }
+
+  /// profiles.user_id（学習者のショートログインID）。教師は通常 null。
+  Future<String?> fetchProfileUserId() async {
+    if (!isLoggedIn) return null;
+    if (_profileUserIdLoaded) return _profileUserId;
+    _profileUserIdLoaded = true;
+    try {
+      var row = await Supabase.instance.client
+          .from('profiles')
+          .select('user_id')
+          .eq('id', currentUser!.id)
+          .maybeSingle();
+      if (row == null) {
+        await Supabase.instance.client.rpc('ensure_my_profile');
+        row = await Supabase.instance.client
+            .from('profiles')
+            .select('user_id')
+            .eq('id', currentUser!.id)
+            .maybeSingle();
+      }
+      final raw = row?['user_id']?.toString().trim();
+      _profileUserId = (raw != null && raw.isNotEmpty) ? raw : null;
+    } catch (e, st) {
+      _profileUserId = null;
+      assert(() {
+        debugPrint('fetchProfileUserId failed: $e\n$st');
+        return true;
+      }());
+    }
+    return _profileUserId;
   }
 
   /// 教師：メールアドレスで新規登録（DB トリガーが role=teacher を付与）。
@@ -105,6 +146,8 @@ class AppAuthNotifier {
   /// ロールキャッシュをクリア（再読み込み時に呼ぶ）
   void clearRoleCache() {
     _cachedRole = null;
+    _profileUserIdLoaded = false;
+    _profileUserId = null;
   }
 
   void listen(void Function() fn) => _listener = fn;
@@ -113,6 +156,17 @@ class AppAuthNotifier {
     _sub?.cancel();
     _listener = null;
   }
+}
+
+/// 学習タブ内の画面で「教材管理」や四択の編集ショートカットを出すか。
+///
+/// - **教師**（`profiles.role == teacher`）でログインしている
+/// - または学習者で [kLearnerShortIdWithManageShortcut] のショート ID
+Future<bool> shouldShowLearnerFlowManageShortcut() async {
+  final role = await appAuthNotifier.fetchRole();
+  if (role == 'teacher') return true;
+  final uid = await appAuthNotifier.fetchProfileUserId();
+  return learnerProfileUserIdShowsManageShortcut(uid);
 }
 
 /// ダークモード（テーマ）の設定を保持し、変更を通知する。

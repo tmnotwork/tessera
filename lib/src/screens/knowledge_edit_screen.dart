@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../database/local_database.dart';
 import '../models/knowledge.dart';
 import '../repositories/knowledge_repository.dart';
+import '../services/knowledge_delete_flow.dart';
 import '../sync/knowledge_save_remote_status.dart';
 
 /// モバイル用の全画面編集画面
@@ -164,19 +165,28 @@ class _KnowledgeEditScreenState extends State<KnowledgeEditScreen> {
 
     setState(() => _saving = true);
     try {
-      final client = Supabase.instance.client;
-      await client.from('knowledge').delete().eq('id', widget.currentKnowledge.id);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('削除しました')),
-        );
-        Navigator.of(context).pop(true);
-      }
+      final messenger = ScaffoldMessenger.of(context);
+      final msg = await runKnowledgeDeleteWithSupabaseReport(
+        knowledgeId: widget.currentKnowledge.id,
+        localDatabase: widget.localDatabase,
+        subjectSupabaseId: widget.subjectId ?? widget.currentKnowledge.subjectId,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          duration: const Duration(seconds: 8),
+        ),
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('削除エラー: $e')),
+          SnackBar(
+            content: Text('削除エラー: $e'),
+            duration: const Duration(seconds: 10),
+            backgroundColor: Theme.of(context).colorScheme.errorContainer,
+          ),
         );
       }
     } finally {
@@ -247,18 +257,6 @@ class _KnowledgeEditScreenState extends State<KnowledgeEditScreen> {
                         contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                       ),
                     ),
-                  ),
-                  FilterChip(
-                    label: const Text('基本'),
-                    selected: _tags.contains('基本'),
-                    onSelected: (value) => setState(() {
-                      if (value) {
-                        if (!_tags.contains('基本')) _tags = [..._tags, '基本']..sort();
-                      } else {
-                        _tags = _tags.where((t) => t != '基本').toList();
-                      }
-                    }),
-                    selectedColor: scheme.surfaceContainerHighest,
                   ),
                 FilterChip(
                   label: const Text('構文'),

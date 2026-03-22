@@ -44,6 +44,15 @@ class Knowledge {
   String? get topic => unit;
   int? get order => displayOrder;
 
+  /// PostgREST / クライアント差で bool 以外で届く場合の吸収
+  static bool _coerceBool(dynamic v) {
+    if (v == null) return false;
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    final s = v.toString().toLowerCase().trim();
+    return s == 'true' || s == 't' || s == '1';
+  }
+
   factory Knowledge.fromSupabase(Map<String, dynamic> row) {
     return Knowledge(
       id: row['id'] as String,
@@ -54,10 +63,10 @@ class Knowledge {
       description: row['description'] as String?,
       type: row['type'] as String? ?? 'grammar',
       displayOrder: row['display_order'] as int?,
-      construction: row['construction'] as bool? ?? false,
+      construction: _coerceBool(row['construction']),
       tags: _parseTagsFromRow(row),
       authorComment: row['author_comment'] as String?,
-      devCompleted: row['dev_completed'] as bool? ?? false,
+      devCompleted: _coerceBool(row['dev_completed']),
     );
   }
 

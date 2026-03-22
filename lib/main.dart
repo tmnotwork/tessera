@@ -1313,12 +1313,15 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
     try {
       final importer = AssetImport(localDb: widget.localDb);
       await importer.run();
+      if (!kIsWeb && SyncEngine.isInitialized) {
+        await SyncEngine.instance.syncIfOnline();
+      }
       await _fetchSubjects();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              '参考書データをインポートしました: 知識 ${importer.knowledgeCount} 件、問題 ${importer.questionCount} 件',
+              '参考書データをインポートしました: 知識 ${importer.knowledgeCount} 件、問題 ${importer.questionCount} 件（knowledge.json のタグ・構文フラグは Supabase に同期済み）',
             ),
           ),
         );
@@ -1328,6 +1331,51 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
       }
     } catch (e) {
       setState(() => _error = 'インポートエラー: $e');
+    } finally {
+      setState(() => _loading = false);
+    }
+  }
+
+  /// 既存の knowledge 行に対し、knowledge.json の tags と construction を Supabase へ書き込む（重複エラーを避けたいとき用）。
+  Future<void> _syncTagsFromAssetsOnly() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final importer = AssetImport(localDb: widget.localDb);
+      await importer.syncTagsFromAssetsOnly();
+      if (!kIsWeb && SyncEngine.isInitialized) {
+        await SyncEngine.instance.syncIfOnline();
+      }
+      await _fetchSubjects();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('knowledge.json のタグ・構文フラグを Supabase に反映しました（ローカルへ Pull 済み）'),
+          ),
+        );
+        if (importer.message != null && importer.message!.isNotEmpty) {
+          final note = importer.message!.trim();
+          setState(() => _error = '同期の注意: $note');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(note, style: const TextStyle(fontSize: 13)),
+              duration: const Duration(seconds: 12),
+              backgroundColor: Theme.of(context).colorScheme.errorContainer,
+              action: SnackBarAction(
+                label: '閉じる',
+                textColor: Theme.of(context).colorScheme.onErrorContainer,
+                onPressed: () {
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                },
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      setState(() => _error = 'knowledge.json 同期エラー: $e');
     } finally {
       setState(() => _loading = false);
     }
@@ -1391,6 +1439,38 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
     );
   }
 
+  static const _englishGrammarSubjectName = '英文法';
+
+  void _openEnglishGrammarKnowledgeDb() {
+    Map<String, dynamic>? row;
+    for (final s in _subjects) {
+      if (s['name']?.toString() == _englishGrammarSubjectName) {
+        row = s;
+        break;
+      }
+    }
+    final subjectId = row?['id'] as String?;
+    if (subjectId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            '科目「$_englishGrammarSubjectName」が見つかりません。「知識DB」から科目を確認するか、科目を追加してください。',
+          ),
+        ),
+      );
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => KnowledgeListScreen(
+          subjectId: subjectId,
+          subjectName: _englishGrammarSubjectName,
+          localDatabase: widget.localDatabase,
+        ),
+      ),
+    );
+  }
+
   void _openMemorizationDb() {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -1436,6 +1516,11 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
             icon: const Icon(Icons.upload_file),
             tooltip: '参考書データをインポート',
             onPressed: _loading ? null : _importAssetData,
+          ),
+          IconButton(
+            icon: const Icon(Icons.label_outline),
+            tooltip: 'タグ・構文フラグを knowledge.json → Supabase に反映',
+            onPressed: _loading ? null : _syncTagsFromAssetsOnly,
           ),
           IconButton(
             icon: const Icon(Icons.add),
@@ -1547,6 +1632,14 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
                 : ListView(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     children: [
+                      ListTile(
+                        leading: const Icon(Icons.auto_stories),
+                        title: const Text('英文法（知識DB）'),
+                        subtitle: const Text('科目「英文法」の知識カードを管理'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: _openEnglishGrammarKnowledgeDb,
+                      ),
+                      const Divider(height: 1),
                       ListTile(
                         leading: const Icon(Icons.menu_book),
                         title: const Text('知識DB'),
@@ -1743,6 +1836,36 @@ Future<Database> _initLocalDb() async {
             );
           }
         }
+      }
+      if (oldVersion < 8) {
+        Future<void> addTagSyncColumns(String table) async {
+          Future<bool> hasCol(String n) async {
+            final cols = await db.rawQuery("PRAGMA table_info('$table')");
+            return cols.any((c) => c['name']?.toString() == n);
+          }
+
+          if (!await hasCol('dirty')) {
+            await db.execute(
+              'ALTER TABLE $table ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0',
+            );
+          }
+          if (!await hasCol('deleted')) {
+            await db.execute(
+              'ALTER TABLE $table ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0',
+            );
+          }
+          if (!await hasCol('updated_at')) {
+            await db.execute(
+              'ALTER TABLE $table ADD COLUMN updated_at TEXT NOT NULL DEFAULT \'\'',
+            );
+            await db.execute(
+              'UPDATE $table SET updated_at = created_at WHERE TRIM(COALESCE(updated_at, \'\')) = \'\'',
+            );
+          }
+        }
+
+        await addTagSyncColumns('local_knowledge_tags');
+        await addTagSyncColumns('local_memorization_tags');
       }
     },
     onOpen: (db) async {

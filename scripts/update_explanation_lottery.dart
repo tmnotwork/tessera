@@ -8,11 +8,11 @@ const baseUrl = 'https://wnufzrehvhcwclnwxwim.supabase.co/rest/v1';
 const anonKey = 'sb_publishable_6ZOloNwIgIFjF9SKRLGgmA_Yc55g0es';
 
 const questionText = r'If I _____ win the lottery, I would quit my job.';
-const newExplanation = '主節に would があるので仮定法と判断する。'
-    'まず仮定法過去（if ＋ 過去形）を考えるが、空欄の直後に動詞の原形 win がある。'
-    '仮定法過去なら if 節は過去形1語で終わるので、原形が続く形ではない。'
-    'そこで「仮定法未来」（if 節で were to ＋ 原形 または should ＋ 原形）を考える。'
-    'したがって (C) were to。will / am to は仮定法の形ではない。would は主節で使う。';
+const newExplanation = '穴のあとに動詞の原形 **win** が続いているので、「空欄＋原形」がひとかたまりのパターンかどうかを見る。'
+    '仮定法**過去**なら if 節は **過去形**（won / were など）で止まり、いきなり別の原形は続けない。'
+    'だから **If I won** のあとに **win** は来られない。'
+    '一方、仮定法**未来**では **were to ＋ 原形** か **should ＋ 原形** が使える。**were to win** なら文として成立する。'
+    'したがって (C) were to。will / would はこの位置では if 節の形にならない。am to もここでの仮定法の型ではない。';
 
 Future<dynamic> httpGet(String path) async {
   final uri = Uri.parse('$baseUrl$path');

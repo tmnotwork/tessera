@@ -97,6 +97,18 @@ Future<void> main() async {
     if (newId != null) {
       idMap[assetId] = newId;
       kCount++;
+      final tags = m['tags'];
+      if (tags is List) {
+        for (final t in tags) {
+          final tagName = t?.toString().trim() ?? '';
+          if (tagName.isEmpty) continue;
+          final tagId = await getOrCreateKnowledgeTag(tagName);
+          await httpPost('/knowledge_card_tags', {
+            'knowledge_id': newId,
+            'tag_id': tagId,
+          });
+        }
+      }
     }
   }
   print('   Inserted knowledge: $kCount');
@@ -138,6 +150,20 @@ Future<void> main() async {
   print('   knowledge(英文法): $kCountCheck');
   print('   questions: $qCountCheck');
   print('Done. Supabase has full 英文法 data.');
+}
+
+Future<String> getOrCreateKnowledgeTag(String name) async {
+  final encoded = Uri.encodeQueryComponent(name);
+  final list = await httpGet('/knowledge_tags?name=eq.$encoded&select=id');
+  if (list is List && list.isNotEmpty) {
+    return (list.first as Map)['id']?.toString() ?? '';
+  }
+  final created = await httpPost('/knowledge_tags', {'name': name});
+  final id = created is List && created.isNotEmpty
+      ? (created.first as Map)['id']?.toString()
+      : (created as Map?)?['id']?.toString();
+  if (id == null || id.isEmpty) throw Exception('Failed to create knowledge tag: $name');
+  return id;
 }
 
 Future<String> getOrCreateSubject() async {

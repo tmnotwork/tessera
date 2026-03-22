@@ -3,15 +3,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../app_scope.dart';
 import '../database/local_database.dart';
 import '../models/english_example.dart';
 import '../models/knowledge.dart';
 import '../repositories/knowledge_repository.dart';
 import '../sync/ensure_synced_for_local_read.dart';
+import '../services/knowledge_delete_flow.dart';
 import '../sync/knowledge_save_remote_status.dart';
 import '../utils/platform_utils.dart';
 import '../widgets/edit_intents.dart';
 import '../widgets/explanation_text.dart';
+import '../supabase/english_example_learning_state_remote.dart';
+import '../utils/knowledge_learner_mem_status.dart';
 import 'english_example_solve_screen.dart';
 import 'knowledge_edit_screen.dart';
 import 'question_solve_screen.dart';
@@ -36,7 +40,7 @@ class KnowledgeDetailScreen extends StatefulWidget {
   final List<Knowledge> allKnowledge;
   final int initialIndex;
   final bool initialEditing;
-  /// 学習者向け：編集不可・執筆者コメント非表示・英語例文ブロック表示
+  /// 学習者向け：編集不可・執筆者コメント非表示・本文下に例文・問題リンク
   final bool isLearnerMode;
   /// ローカルDB使用時：保存を Repository 経由にして永続化を確実にする
   final LocalDatabase? localDatabase;
@@ -80,8 +84,15 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
   final Map<String, List<String>> _linkedQuestions = {};
   /// 問題がコアかどうか（questionId -> isCore）。question_knowledge の is_core を反映
   final Map<String, bool> _questionIsCore = {};
-  /// 学習者向け：knowledge_id -> 英語例文（1件まで）
-  final Map<String, EnglishExample> _englishByKnowledgeId = {};
+  /// 学習者向け：knowledge_id -> 英語例文
+  final Map<String, List<EnglishExample>> _englishExamplesByKnowledgeId = {};
+  /// 学習者向け：example_id -> SM-2 行（読み上げ・四択で共有）
+  final Map<String, Map<String, dynamic>> _englishExampleLearningStates = {};
+  /// 学習者向け：question_id -> 四択などの学習状態
+  final Map<String, Map<String, dynamic>> _questionLearningStates = {};
+  /// questions.id -> question_type（四択判定用）
+  final Map<String, String> _questionTypeById = {};
+  bool _showManageEdit = false;
 
   @override
   void initState() {
@@ -93,28 +104,136 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
     _initControllersFromCurrent();
     _loadLinkedQuestions();
     _loadEnglishExamplesForLearner();
+    if (widget.isLearnerMode) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        if (await shouldShowLearnerFlowManageShortcut()) {
+          setState(() => _showManageEdit = true);
+        }
+      });
+    }
+  }
+
+  /// 画面の Knowledge.id（`local_*` 可）→ Supabase `knowledge.id`（UUID）
+  Future<Map<String, String>> _displayKnowledgeIdToSupabaseId() async {
+    final out = <String, String>{};
+    final pendingLocal = <int, String>{};
+
+    for (final k in _allKnowledge) {
+      if (k.id.startsWith('local_')) {
+        final lid = int.tryParse(k.id.replaceFirst('local_', ''));
+        if (lid != null) pendingLocal[lid] = k.id;
+      } else {
+        out[k.id] = k.id;
+      }
+    }
+
+    if (widget.localDatabase != null && pendingLocal.isNotEmpty) {
+      final ids = pendingLocal.keys.toList();
+      final placeholders = List.filled(ids.length, '?').join(',');
+      final rows = await widget.localDatabase!.db.query(
+        LocalTable.knowledge,
+        columns: ['local_id', 'supabase_id'],
+        where: 'local_id IN ($placeholders) AND deleted = ?',
+        whereArgs: [...ids, 0],
+      );
+      for (final r in rows) {
+        final lid = r['local_id'] as int?;
+        final sid = r['supabase_id']?.toString().trim();
+        if (lid == null || sid == null || sid.isEmpty) continue;
+        final disp = pendingLocal[lid];
+        if (disp != null) out[disp] = sid;
+      }
+    }
+
+    return out;
+  }
+
+  /// Supabase 照合用の UUID 一覧と、UUID（正規化）→ 画面の knowledge.id へのマップ
+  Future<({List<String> queryIds, Map<String, String> remoteNormToDisplayId})>
+      _knowledgeSupabaseQueryContext() async {
+    final displayToRemote = await _displayKnowledgeIdToSupabaseId();
+    final queryIds = <String>{};
+    final remoteNormToDisplayId = <String, String>{};
+
+    for (final k in _allKnowledge) {
+      final remote = displayToRemote[k.id];
+      if (remote != null && remote.isNotEmpty) {
+        queryIds.add(remote);
+        remoteNormToDisplayId[remote.trim().toLowerCase()] = k.id;
+      }
+    }
+
+    return (queryIds: queryIds.toList(), remoteNormToDisplayId: remoteNormToDisplayId);
   }
 
   Future<void> _loadEnglishExamplesForLearner() async {
     if (!widget.isLearnerMode || _allKnowledge.isEmpty) return;
     try {
       final client = Supabase.instance.client;
-      final knowledgeIds = _allKnowledge.map((k) => k.id).toList();
+      final ctx = await _knowledgeSupabaseQueryContext();
+      if (ctx.queryIds.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _englishExamplesByKnowledgeId.clear();
+          _englishExampleLearningStates.clear();
+        });
+        return;
+      }
+
       final rows = await client
           .from('english_examples')
-          .select('id, knowledge_id, front_ja, back_en, explanation, supplement')
-          .inFilter('knowledge_id', knowledgeIds);
-      final map = <String, EnglishExample>{};
+          .select('id, knowledge_id, front_ja, back_en, explanation, supplement, display_order')
+          .inFilter('knowledge_id', ctx.queryIds);
+      final byKnowledge = <String, List<Map<String, dynamic>>>{
+        for (final k in _allKnowledge) k.id: [],
+      };
       for (final row in rows as List) {
         final r = row as Map<String, dynamic>;
-        final ex = EnglishExample.fromRow(r);
-        map[ex.knowledgeId] = ex;
+        final rawKid = r['knowledge_id']?.toString();
+        final n = rawKid != null ? rawKid.trim().toLowerCase() : '';
+        final displayId = n.isNotEmpty ? ctx.remoteNormToDisplayId[n] : null;
+        if (displayId != null && byKnowledge.containsKey(displayId)) {
+          byKnowledge[displayId]!.add(r);
+        }
+      }
+      final map = <String, List<EnglishExample>>{};
+      for (final e in byKnowledge.entries) {
+        e.value.sort((a, b) {
+          final da = a['display_order'] as int?;
+          final db = b['display_order'] as int?;
+          if (da != null && db != null) return da.compareTo(db);
+          if (da != null) return -1;
+          if (db != null) return 1;
+          return 0;
+        });
+        map[e.key] = e.value.map(EnglishExample.fromRow).toList();
+      }
+      final learnerId = client.auth.currentUser?.id;
+      var states = <String, Map<String, dynamic>>{};
+      if (learnerId != null) {
+        final exampleIds = <String>[];
+        for (final list in map.values) {
+          for (final ex in list) {
+            exampleIds.add(ex.id);
+          }
+        }
+        if (exampleIds.isNotEmpty) {
+          states = await EnglishExampleLearningStateRemote.fetchStates(
+            client: client,
+            learnerId: learnerId,
+            exampleIds: exampleIds,
+          );
+        }
       }
       if (!mounted) return;
       setState(() {
-        _englishByKnowledgeId
+        _englishExamplesByKnowledgeId
           ..clear()
           ..addAll(map);
+        _englishExampleLearningStates
+          ..clear()
+          ..addAll(states);
       });
     } catch (_) {}
   }
@@ -127,7 +246,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
       await ensureSyncedForLocalRead();
       if (!mounted) return;
       final client = Supabase.instance.client;
-      final knowledgeIds = _allKnowledge.map((k) => k.id).toList();
+      final ctx = await _knowledgeSupabaseQueryContext();
       final normalizedToOriginal = <String, String>{};
       final byKnowledge = <String, List<String>>{};
       final isCoreMap = <String, bool>{};
@@ -135,27 +254,46 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
         byKnowledge[k.id] = [];
         normalizedToOriginal[k.id.toString().trim().toLowerCase()] = k.id;
       }
+
+      String? resolveDisplayKnowledgeId(String? raw) {
+        if (raw == null) return null;
+        final n = raw.trim().toLowerCase();
+        return ctx.remoteNormToDisplayId[n] ?? normalizedToOriginal[n];
+      }
+
+      if (ctx.queryIds.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _linkedQuestions.clear();
+          _linkedQuestions.addAll(byKnowledge);
+          _questionIsCore.clear();
+          _questionTypeById.clear();
+          _questionLearningStates.clear();
+        });
+        return;
+      }
+
       try {
-        final fromDirect = await client.from('questions').select('id, knowledge_id').inFilter('knowledge_id', knowledgeIds);
+        final fromDirect =
+            await client.from('questions').select('id, knowledge_id').inFilter('knowledge_id', ctx.queryIds);
         for (final row in fromDirect as List) {
           final r = row as Map<String, dynamic>;
           final qId = r['id']?.toString();
-          final rawK = r['knowledge_id']?.toString();
-          final kIdNorm = rawK != null ? rawK.trim().toLowerCase() : null;
-          final kId = kIdNorm != null ? normalizedToOriginal[kIdNorm] : null;
+          final kId = resolveDisplayKnowledgeId(r['knowledge_id']?.toString());
           if (qId != null && kId != null && !byKnowledge[kId]!.contains(qId)) {
             byKnowledge[kId]!.add(qId);
           }
         }
       } catch (_) {}
       try {
-        final junc = await client.from('question_knowledge').select('question_id, knowledge_id, is_core').inFilter('knowledge_id', knowledgeIds);
+        final junc = await client
+            .from('question_knowledge')
+            .select('question_id, knowledge_id, is_core')
+            .inFilter('knowledge_id', ctx.queryIds);
         for (final row in junc as List) {
           final r = row as Map<String, dynamic>;
           final qId = r['question_id']?.toString();
-          final rawK2 = r['knowledge_id']?.toString();
-          final kIdNorm = rawK2 != null ? rawK2.trim().toLowerCase() : null;
-          final kId = kIdNorm != null ? normalizedToOriginal[kIdNorm] : null;
+          final kId = resolveDisplayKnowledgeId(r['knowledge_id']?.toString());
           if (qId != null && kId != null && !byKnowledge[kId]!.contains(qId)) {
             byKnowledge[kId]!.add(qId);
           }
@@ -177,12 +315,55 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
         } catch (_) {}
       }
 
+      final questionTypeById = <String, String>{};
+      final filteredQIds = byKnowledge.values.expand((l) => l).toSet().toList();
+      if (filteredQIds.isNotEmpty) {
+        try {
+          final typeRows =
+              await client.from('questions').select('id, question_type').inFilter('id', filteredQIds);
+          for (final raw in typeRows as List) {
+            final r = raw as Map<String, dynamic>;
+            final id = r['id']?.toString();
+            if (id != null && id.isNotEmpty) {
+              questionTypeById[id] = r['question_type']?.toString() ?? '';
+            }
+          }
+        } catch (_) {}
+      }
+
+      var qStates = <String, Map<String, dynamic>>{};
+      if (widget.isLearnerMode && filteredQIds.isNotEmpty) {
+        final uid = client.auth.currentUser?.id;
+        if (uid != null) {
+          try {
+            final stateRows = await client
+                .from('question_learning_states')
+                .select('question_id, last_is_correct, reviewed_count, lapse_count, next_review_at')
+                .eq('learner_id', uid)
+                .inFilter('question_id', filteredQIds);
+            for (final raw in stateRows as List) {
+              final r = raw as Map<String, dynamic>;
+              final qid = r['question_id']?.toString();
+              if (qid != null && qid.isNotEmpty) {
+                qStates[qid] = Map<String, dynamic>.from(r);
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
       if (!mounted) return;
       setState(() {
         _linkedQuestions.clear();
         _linkedQuestions.addAll(byKnowledge);
         _questionIsCore.clear();
         _questionIsCore.addAll(isCoreMap);
+        _questionTypeById
+          ..clear()
+          ..addAll(questionTypeById);
+        _questionLearningStates
+          ..clear()
+          ..addAll(qStates);
       });
     } catch (_) {}
   }
@@ -364,19 +545,29 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
 
     setState(() => _saving = true);
     try {
-      final client = Supabase.instance.client;
-      await client.from('knowledge').delete().eq('id', currentKnowledge.id);
-
-      if (mounted) {
-        final messenger = ScaffoldMessenger.of(context);
-        Navigator.of(context).pop(true);
-        messenger.showSnackBar(const SnackBar(content: Text('削除しました')));
-      }
+      final messenger = ScaffoldMessenger.of(context);
+      final msg = await runKnowledgeDeleteWithSupabaseReport(
+        knowledgeId: currentKnowledge.id,
+        localDatabase: widget.localDatabase,
+        subjectSupabaseId: widget.subjectId ?? currentKnowledge.subjectId,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          duration: const Duration(seconds: 8),
+        ),
+      );
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('削除エラー: $e')),
+          SnackBar(
+            content: Text('削除エラー: $e'),
+            duration: const Duration(seconds: 10),
+            backgroundColor: Theme.of(context).colorScheme.errorContainer,
+          ),
         );
       }
     }
@@ -405,6 +596,12 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
           ],
         ),
         actions: [
+          if (!_isEditing && widget.isLearnerMode && _showManageEdit)
+            IconButton(
+              icon: const Icon(Icons.edit),
+              tooltip: '教材を編集',
+              onPressed: () => openManageNotifier.openManage?.call(context),
+            ),
           if (hasPrevious)
             IconButton(
               icon: const Icon(Icons.chevron_left),
@@ -589,21 +786,6 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                   ),
                 ),
                 FilterChip(
-                  label: const Text('基本'),
-                  selected: _tags.contains('基本'),
-                  onSelected: (value) async {
-                    setState(() {
-                      if (value) {
-                        if (!_tags.contains('基本')) _tags = [..._tags, '基本']..sort();
-                      } else {
-                        _tags = _tags.where((t) => t != '基本').toList();
-                      }
-                    });
-                    await _saveChanges(exitEditMode: false);
-                  },
-                  selectedColor: scheme.surfaceContainerHighest,
-                ),
-                FilterChip(
                   label: const Text('構文'),
                   selected: _construction,
                   onSelected: (value) async {
@@ -779,7 +961,9 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
               ),
               Expanded(
                 child: SingleChildScrollView(
-                  child: ExplanationText(text: _explanationController.text),
+                  child: SelectionArea(
+                    child: ExplanationText(text: _explanationController.text),
+                  ),
                 ),
               ),
             ],
@@ -789,100 +973,115 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
     );
   }
 
-  Widget _buildEnglishExampleSection(BuildContext context, Knowledge knowledge) {
-    final ex = _englishByKnowledgeId[knowledge.id];
-    if (ex == null) return const SizedBox.shrink();
-    final theme = Theme.of(context);
+  Widget _buildLearnerMemorizationBadges(BuildContext context, Knowledge knowledge) {
+    final qids = _linkedQuestions[knowledge.id] ?? [];
+    final mcqIds =
+        qids.where((id) => _questionTypeById[id] == 'multiple_choice').toList();
+    final examples = _englishExamplesByKnowledgeId[knowledge.id] ?? [];
+
+    if (mcqIds.isEmpty && examples.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     return Padding(
-      padding: const EdgeInsets.only(top: 24),
-      child: Card(
-        margin: EdgeInsets.zero,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.translate, size: 20, color: theme.colorScheme.primary),
-                  const SizedBox(width: 8),
-                  Text(
-                    '英語例文',
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      color: theme.colorScheme.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                ex.frontJa,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodyLarge,
-              ),
-              const SizedBox(height: 12),
-              FilledButton.tonalIcon(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (context) => EnglishExampleSolveScreen(
-                        examples: [ex],
-                        subjectName: knowledge.title,
-                      ),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.play_circle_outline),
-                label: const Text('例文で練習'),
-              ),
-            ],
-          ),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: KnowledgeLearnerMemStatus.combinedMark(
+          context,
+          mcqIds: mcqIds,
+          examples: examples,
+          questionStates: _questionLearningStates,
+          exampleStates: _englishExampleLearningStates,
+          size: 28,
         ),
       ),
     );
   }
 
-  Widget _buildPracticeLink(BuildContext context, Knowledge knowledge) {
+  /// 学習者向け：本文の直後に、例文・問題へのリンクのみ（アイコンサイズ統一）
+  Widget _buildLearnerPracticeLinks(BuildContext context, Knowledge knowledge) {
+    final examples = _englishExamplesByKnowledgeId[knowledge.id];
+    final hasExamples = examples != null && examples.isNotEmpty;
+    final exList = hasExamples ? examples : null;
     final ids = _linkedQuestions[knowledge.id];
-    if (ids == null || ids.isEmpty) return const SizedBox.shrink();
-    final count = ids.length;
-    // コア問題を先に並べる（習得判定に含める問題を優先表示）
-    final coreIds = ids.where((id) => _questionIsCore[id] != false).toList();
-    final suppIds = ids.where((id) => _questionIsCore[id] == false).toList();
-    final orderedIds = [...coreIds, ...suppIds];
-    final coreCount = coreIds.length;
-    final suppCount = suppIds.length;
-    String label;
-    if (count == 1) {
-      label = coreCount == 1 ? '問題を解く（コア）' : '問題を解く（追加）';
-    } else if (suppCount == 0) {
-      label = '問題を解く（$count 問・コア）';
-    } else if (coreCount == 0) {
-      label = '問題を解く（$count 問・追加）';
-    } else {
-      label = '問題を解く（コア$coreCount・追加$suppCount）';
+    final hasQuestions = ids != null && ids.isNotEmpty;
+    if (!hasExamples && !hasQuestions) return const SizedBox.shrink();
+
+    final initialStates = <String, Map<String, dynamic>>{};
+    if (exList != null) {
+      for (final ex in exList) {
+        final s = _englishExampleLearningStates[ex.id];
+        if (s != null) initialStates[ex.id] = s;
+      }
     }
+
+    List<String>? orderedQuestionIds;
+    if (hasQuestions) {
+      final coreIds = ids.where((id) => _questionIsCore[id] != false).toList();
+      final suppIds = ids.where((id) => _questionIsCore[id] == false).toList();
+      orderedQuestionIds = [...coreIds, ...suppIds];
+    }
+
+    const iconSize = 24.0;
+    final linkStyle = TextButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      minimumSize: Size.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
+
     return Padding(
-      padding: const EdgeInsets.only(top: 24),
-      child: OutlinedButton.icon(
-        onPressed: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => QuestionSolveScreen(
-                questionIds: orderedIds,
-                knowledgeTitle: knowledge.title,
-                isLearnerMode: widget.isLearnerMode,
-              ),
+      padding: const EdgeInsets.only(top: 16.0),
+      child: Wrap(
+        spacing: 4,
+        runSpacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          if (hasQuestions)
+            TextButton.icon(
+              style: linkStyle,
+              icon: const Icon(Icons.fact_check_outlined, size: iconSize),
+              label: const Text('練習問題'),
+              onPressed: () {
+                Navigator.of(context)
+                    .push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (context) => QuestionSolveScreen(
+                      questionIds: orderedQuestionIds!,
+                      knowledgeTitle: knowledge.title,
+                      isLearnerMode: widget.isLearnerMode,
+                    ),
+                  ),
+                )
+                    .then((_) {
+                  if (mounted) _loadLinkedQuestions();
+                });
+              },
             ),
-          );
-        },
-        icon: const Icon(Icons.quiz_outlined),
-        label: Text(label),
-        style: OutlinedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
-        ),
+          if (hasExamples) ...[
+            TextButton.icon(
+              style: linkStyle,
+              icon: const Icon(Icons.record_voice_over, size: iconSize),
+              label: const Text('例文暗記'),
+              onPressed: () {
+                Navigator.of(context)
+                    .push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (context) => EnglishExampleSolveScreen(
+                      examples: exList!,
+                      subjectName: knowledge.title,
+                      initialStates: initialStates,
+                      cardMode: true,
+                    ),
+                  ),
+                )
+                    .then((_) {
+                  if (mounted) _loadEnglishExamplesForLearner();
+                });
+              },
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -914,7 +1113,12 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
           Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (topic != null || construction || (!widget.isLearnerMode && devCompleted) || tags.isNotEmpty)
+                if (widget.isLearnerMode)
+                  _buildLearnerMemorizationBadges(context, knowledge)
+                else if (topic != null ||
+                    construction ||
+                    devCompleted ||
+                    tags.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.all(16.0),
                     child: Wrap(
@@ -932,7 +1136,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                             backgroundColor:
                                 Theme.of(context).colorScheme.surfaceContainerHighest,
                           ),
-                        if (!widget.isLearnerMode && devCompleted)
+                        if (devCompleted)
                           Chip(
                             label: const Text('完成'),
                             backgroundColor:
@@ -957,8 +1161,6 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               ExplanationText(text: explanation),
-                              if (widget.isLearnerMode)
-                                _buildEnglishExampleSection(context, knowledge),
                               if (!widget.isLearnerMode && authorComment.isNotEmpty) ...[
                                 const SizedBox(height: 24),
                                 Container(
@@ -1001,7 +1203,8 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                             ],
                           ),
                         ),
-                        _buildPracticeLink(context, knowledge),
+                        if (widget.isLearnerMode)
+                          _buildLearnerPracticeLinks(context, knowledge),
                       ],
                     ),
                   ),

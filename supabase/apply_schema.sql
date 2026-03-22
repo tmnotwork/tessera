@@ -40,6 +40,9 @@ ALTER TABLE public.knowledge
 ALTER TABLE public.knowledge
   ADD COLUMN IF NOT EXISTS dev_completed BOOLEAN NOT NULL DEFAULT false;
 
+ALTER TABLE public.knowledge
+  ADD COLUMN IF NOT EXISTS construction BOOLEAN NOT NULL DEFAULT false;
+
 -- 知識カード用タグ（RDB・中間テーブル）
 CREATE TABLE IF NOT EXISTS public.knowledge_tags (
   id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),

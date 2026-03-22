@@ -1,4 +1,4 @@
-/// Supabase `english_examples` 1行に対応（知識と 1:1）
+/// Supabase `english_examples` 1行に対応（同一 `knowledge_id` に複数行可）
 class EnglishExample {
   EnglishExample({
     required this.id,

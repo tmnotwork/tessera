@@ -23,13 +23,34 @@ CREATE INDEX IF NOT EXISTS ix_knowledge_card_tags_tag_id
 
 COMMENT ON TABLE public.knowledge_card_tags IS '知識カードとタグの中間テーブル（多対多）';
 
--- 既存の knowledge.tags カラム（JSONB）があればデータを移行してから削除
+-- 既存の knowledge.tags（JSONB または text[]）があれば移行してから削除
 DO $$
+DECLARE
+  tags_udt name;
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'knowledge' AND column_name = 'tags'
-  ) THEN
+  SELECT c.udt_name INTO tags_udt
+  FROM information_schema.columns c
+  WHERE c.table_schema = 'public' AND c.table_name = 'knowledge' AND c.column_name = 'tags';
+
+  IF tags_udt IS NULL THEN
+    RETURN;
+  END IF;
+
+  IF tags_udt = '_text' THEN
+    INSERT INTO public.knowledge_tags (name)
+    SELECT DISTINCT trim(t)
+    FROM public.knowledge k,
+         LATERAL unnest(k.tags) AS u(t)
+    WHERE k.tags IS NOT NULL AND cardinality(k.tags) > 0
+    ON CONFLICT (name) DO NOTHING;
+
+    INSERT INTO public.knowledge_card_tags (knowledge_id, tag_id)
+    SELECT k.id, tg.id
+    FROM public.knowledge k
+    CROSS JOIN LATERAL unnest(k.tags) AS tn(name)
+    JOIN public.knowledge_tags tg ON tg.name = trim(tn.name)
+    WHERE k.tags IS NOT NULL AND cardinality(k.tags) > 0;
+  ELSIF tags_udt = 'jsonb' THEN
     INSERT INTO public.knowledge_tags (name)
     SELECT DISTINCT jsonb_array_elements_text(k.tags)::text
     FROM public.knowledge k
@@ -42,9 +63,11 @@ BEGIN
     CROSS JOIN LATERAL jsonb_array_elements_text(k.tags) AS tag_name(text)
     JOIN public.knowledge_tags t ON t.name = tag_name
     WHERE k.tags IS NOT NULL AND jsonb_typeof(k.tags) = 'array';
-
-    ALTER TABLE public.knowledge DROP COLUMN tags;
+  ELSE
+    RAISE EXCEPTION 'knowledge.tags は jsonb または text[] である必要があります (実際: %)', tags_udt;
   END IF;
+
+  ALTER TABLE public.knowledge DROP COLUMN tags;
 END $$;
 
 -- RLS

@@ -214,17 +214,58 @@ class _FourChoiceProgressScreenState extends State<FourChoiceProgressScreen> wit
     }
   }
 
+  static const double _tileExtent = 24;
+
+  /// チャプター名を書記素ごとに [_tileExtent] 四方のタイルに分割（隙間なし）。
+  /// 進捗マス（明るい地＋枠）と反転させ、地を暗く文字を明るくする。
+  Widget _chapterLabel(BuildContext context, String name) {
+    if (name.isEmpty) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    final textStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+          fontWeight: FontWeight.w800,
+          height: 1.0,
+          color: scheme.onInverseSurface,
+        );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Wrap(
+        spacing: 0,
+        runSpacing: 0,
+        children: [
+          for (final ch in name.characters)
+            Container(
+              width: _tileExtent,
+              height: _tileExtent,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: scheme.inverseSurface,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: scheme.onInverseSurface.withValues(alpha: 0.35),
+                  width: 1.5,
+                ),
+              ),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(ch, style: textStyle),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
       return Scaffold(
-        appBar: AppBar(title: const Text('四択の暗記状況')),
+        appBar: AppBar(title: const Text('四択問題の学習状況')),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
     if (_error != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('四択の暗記状況')),
+        appBar: AppBar(title: const Text('四択問題の学習状況')),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
@@ -247,14 +288,14 @@ class _FourChoiceProgressScreenState extends State<FourChoiceProgressScreen> wit
 
     if (_groupedTiles.isEmpty) {
       return Scaffold(
-        appBar: AppBar(title: const Text('四択の暗記状況')),
+        appBar: AppBar(title: const Text('四択問題の学習状況')),
         body: const Center(child: Text('四択問題がありません')),
       );
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('四択の暗記状況'),
+        title: const Text('四択問題の学習状況'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -263,60 +304,46 @@ class _FourChoiceProgressScreenState extends State<FourChoiceProgressScreen> wit
           ),
         ],
       ),
-      body: ListView(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        children: [
-          ..._groupedTiles.entries.map((entry) {
-            final unit = entry.key;
-            final tiles = entry.value;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    unit,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 1,
-                    runSpacing: 1,
-                    children: tiles.map((item) {
-                      return InkWell(
-                        onTap: () async {
-                          await Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (context) => QuestionSolveScreen(
-                                questionIds: [item.questionId],
-                                knowledgeTitle: unit,
-                                isLearnerMode: true,
-                              ),
-                            ),
-                          );
-                          if (mounted) _load();
-                        },
-                        borderRadius: BorderRadius.circular(6),
-                        child: Container(
-                          width: 24,
-                          height: 24,
-                          decoration: BoxDecoration(
-                            color: _tileColor(context, item.status),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: Theme.of(context).colorScheme.outline,
-                              width: 1.5,
-                            ),
-                          ),
+        child: Wrap(
+          spacing: 0,
+          runSpacing: 0,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            for (final entry in _groupedTiles.entries) ...[
+              _chapterLabel(context, entry.key),
+              for (final item in entry.value)
+                InkWell(
+                  onTap: () async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => QuestionSolveScreen(
+                          questionIds: [item.questionId],
+                          knowledgeTitle: entry.key,
+                          isLearnerMode: true,
                         ),
-                      );
-                    }).toList(),
+                      ),
+                    );
+                    if (mounted) _load();
+                  },
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    width: _tileExtent,
+                    height: _tileExtent,
+                    decoration: BoxDecoration(
+                      color: _tileColor(context, item.status),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outline,
+                        width: 1.5,
+                      ),
+                    ),
                   ),
-                ],
-              ),
-            );
-          }),
-        ],
+                ),
+            ],
+          ],
+        ),
       ),
     );
   }

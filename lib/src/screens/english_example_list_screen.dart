@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/english_example.dart';
 import '../supabase/english_example_learning_state_remote.dart';
 import '../sync/ensure_synced_for_local_read.dart';
+import '../utils/english_example_review_filter.dart';
 import 'english_example_solve_screen.dart';
 
 /// 出題モードの種類
@@ -18,6 +19,7 @@ class EnglishExampleListScreen extends StatefulWidget {
     this.subjectId,
     this.subjectName,
     this.isLearnerMode = false,
+    this.readAloudMenuOnly = false,
   });
 
   final String? subjectId;
@@ -25,6 +27,9 @@ class EnglishExampleListScreen extends StatefulWidget {
 
   /// true: 閲覧・出題のみ（教師向けの追加・編集は不可）
   final bool isLearnerMode;
+
+  /// true かつ [isLearnerMode]: 一覧ではなく「チャプターごとに出題」「復習モード」の2メニューのみ表示
+  final bool readAloudMenuOnly;
 
   @override
   State<EnglishExampleListScreen> createState() => _EnglishExampleListScreenState();
@@ -46,6 +51,9 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   _StudyFilter _studyFilter = _StudyFilter.dueToday;
 
   String? get _learnerId => _client.auth.currentUser?.id;
+
+  bool get _readAloudMenuOnly =>
+      widget.isLearnerMode && widget.readAloudMenuOnly;
 
   @override
   void initState() {
@@ -160,7 +168,10 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   // 出題開始
   // ──────────────────────────────
 
-  void _startSolve(List<Map<String, dynamic>> targetItems) {
+  void _startSolve(
+    List<Map<String, dynamic>> targetItems, {
+    String? sessionDescriptor,
+  }) {
     final examples =
         targetItems.map((e) => EnglishExample.fromRow(Map<String, dynamic>.from(e))).toList();
 
@@ -175,10 +186,105 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
         builder: (context) => EnglishExampleSolveScreen(
           examples: examples,
           subjectName: widget.subjectName,
+          sessionDescriptor: sessionDescriptor,
           initialStates: initialStates,
         ),
       ),
     ).then((_) => _load()); // 戻ったら状態を再読込
+  }
+
+  /// knowledge.unit（参考書チャプター）ごとにグループ化し、表示順の先頭が早い単元ほど上に並べる。
+  List<MapEntry<String, List<Map<String, dynamic>>>> _chaptersOrdered() {
+    final map = <String, List<Map<String, dynamic>>>{};
+    for (final item in _items) {
+      final u = _unitKeyFromItem(item);
+      map.putIfAbsent(u, () => []).add(item);
+    }
+    int minDisplayOrder(List<Map<String, dynamic>> xs) {
+      var m = 1 << 30;
+      for (final e in xs) {
+        final o = e['display_order'] as int?;
+        if (o != null && o < m) m = o;
+      }
+      return m;
+    }
+
+    final entries = map.entries.toList()
+      ..sort((a, b) => minDisplayOrder(a.value).compareTo(minDisplayOrder(b.value)));
+    return entries;
+  }
+
+  static String _unitKeyFromItem(Map<String, dynamic> item) {
+    final k = item['knowledge'];
+    if (k is Map<String, dynamic>) {
+      final u = k['unit']?.toString().trim();
+      if (u != null && u.isNotEmpty) return u;
+    }
+    return '（単元なし）';
+  }
+
+  void _startReviewMode() {
+    if (_learnerId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('復習モードはログイン後に利用できます。')),
+      );
+      return;
+    }
+
+    final targets = _items.where((item) {
+      final id = item['id'] as String?;
+      if (id == null) return false;
+      return EnglishExampleReviewFilter.needsReview(_learningStates[id]);
+    }).toList();
+
+    if (targets.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('復習モードの対象となる例文がありません。')),
+      );
+      return;
+    }
+
+    _startSolve(targets, sessionDescriptor: '復習モード');
+  }
+
+  Widget _buildReadAloudMenuBody() {
+    if (_items.isEmpty) {
+      return const Center(child: Text('この科目の例文はまだありません'));
+    }
+
+    final chapters = _chaptersOrdered();
+
+    // スマホ含め常に縦一列：復習モード → 各チャプター名
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      children: [
+        ListTile(
+          title: const Text('復習モード'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: _loading ? null : _startReviewMode,
+        ),
+        for (final e in chapters) ...[
+          const Divider(height: 1),
+          ListTile(
+            title: Text(
+              e.key,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _loading
+                ? null
+                : () {
+                    final label = e.key;
+                    _startSolve(
+                      List<Map<String, dynamic>>.from(e.value),
+                      sessionDescriptor: '単元「$label」',
+                    );
+                  },
+          ),
+        ],
+      ],
+    );
   }
 
   // ──────────────────────────────
@@ -194,21 +300,13 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
 
   Future<void> _openEditor({Map<String, dynamic>? current}) async {
     final messenger = ScaffoldMessenger.of(context);
-    final usedKnowledgeIds = _items
-        .where((e) => e['id'] != current?['id'])
-        .map((e) => e['knowledge_id']?.toString())
-        .whereType<String>()
-        .toSet();
+    final candidates = List<Map<String, dynamic>>.from(_knowledgeRows);
 
-    final candidates = _knowledgeRows
-        .where((k) => !usedKnowledgeIds.contains(k['id']?.toString()))
-        .toList();
-
-    if (current == null && candidates.isEmpty) {
+    if (candidates.isEmpty) {
       if (!mounted) return;
       messenger.showSnackBar(
         const SnackBar(
-          content: Text('紐づけ可能な知識がありません（各知識は1件の例文のみ登録可能です）。'),
+          content: Text('紐づけ可能な知識がありません。'),
           duration: Duration(seconds: 5),
         ),
       );
@@ -458,19 +556,17 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       appBar: AppBar(
         title: Text(title),
         actions: [
-          if (widget.isLearnerMode && _items.isNotEmpty) ...[
-            // フィルター切り替えボタン
+          if (widget.isLearnerMode && !_readAloudMenuOnly && _items.isNotEmpty) ...[
             _FilterToggleButton(
               current: _studyFilter,
               dueCount: dueCount,
               onChanged: (f) => setState(() => _studyFilter = f),
             ),
-            // 出題ボタン
             if (filtered.isNotEmpty)
               TextButton.icon(
                 onPressed: _loading ? null : () => _startSolve(filtered),
-                icon: const Icon(Icons.quiz),
-                label: Text('出題 (${filtered.length})'),
+                icon: const Icon(Icons.record_voice_over),
+                label: Text('読み上げ (${filtered.length})'),
               ),
           ],
           IconButton(
@@ -508,14 +604,16 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
                     ),
                   ),
                 )
-              : filtered.isEmpty
-                  ? _buildEmpty()
-                  : ListView.separated(
-                      itemCount: filtered.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, index) =>
-                          _buildListItem(context, filtered[index]),
-                    ),
+              : _readAloudMenuOnly
+                  ? _buildReadAloudMenuBody()
+                  : filtered.isEmpty
+                      ? _buildEmpty()
+                      : ListView.separated(
+                          itemCount: filtered.length,
+                          separatorBuilder: (_, _) => const Divider(height: 1),
+                          itemBuilder: (context, index) =>
+                              _buildListItem(context, filtered[index]),
+                        ),
     );
   }
 

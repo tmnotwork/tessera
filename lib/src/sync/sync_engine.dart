@@ -597,6 +597,21 @@ class SyncEngine {
   }
 
   Future<void> _updateLocalFromRemote(String localTable, Map<String, dynamic> remote, String remoteTable, int localId, bool isDeleted) async {
+    // Pull が deleted_at を含まない（legacy 列セット等）とき、ローカルの墓石を deleted=0 で上書きしない
+    if (localTable == LocalTable.knowledge && !isDeleted) {
+      final cur = await _localDb.getByLocalId(localTable, localId);
+      if (cur != null && (cur['deleted'] == 1 || cur['deleted'] == true)) {
+        if (!remote.containsKey('deleted_at')) {
+          if (kDebugMode) {
+            debugPrint(
+              'SyncEngine: skip resurrect local_knowledge local_id=$localId '
+              '(local deleted=1, remote payload has no deleted_at key)',
+            );
+          }
+          return;
+        }
+      }
+    }
     final row = _remoteToLocalRow(remote, remoteTable);
     row['supabase_id'] = _str(remote['id']);
     row['dirty'] = 0;

@@ -1,7 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 /// ローカルDBのバージョン（双方向同期用スキーマ）
-const int kLocalDbVersion = 7;
+const int kLocalDbVersion = 8;
 
 /// 既存の knowledge_local はバージョン2で作成。バージョン3で local_* テーブルを追加。
 Future<void> createLocalSyncTables(Database db) async {
@@ -105,14 +105,17 @@ Future<void> createLocalSyncTables(Database db) async {
     )
   ''');
 
-  // 6) 知識タグマスタ
+  // 6) 知識タグマスタ（他テーブルと同様、Pull 時は upsertBySupabaseId が dirty/deleted/updated_at を書く）
   await db.execute('''
     CREATE TABLE IF NOT EXISTS local_knowledge_tags (
       local_id INTEGER PRIMARY KEY AUTOINCREMENT,
       supabase_id TEXT UNIQUE,
-      name TEXT NOT NULL UNIQUE,
+      dirty INTEGER NOT NULL DEFAULT 0,
+      deleted INTEGER NOT NULL DEFAULT 0,
       synced_at TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      name TEXT NOT NULL UNIQUE
     )
   ''');
 
@@ -133,9 +136,12 @@ Future<void> createLocalSyncTables(Database db) async {
     CREATE TABLE IF NOT EXISTS local_memorization_tags (
       local_id INTEGER PRIMARY KEY AUTOINCREMENT,
       supabase_id TEXT UNIQUE,
-      name TEXT NOT NULL UNIQUE,
+      dirty INTEGER NOT NULL DEFAULT 0,
+      deleted INTEGER NOT NULL DEFAULT 0,
       synced_at TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      name TEXT NOT NULL UNIQUE
     )
   ''');
 

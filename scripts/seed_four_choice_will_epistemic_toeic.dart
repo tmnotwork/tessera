@@ -1,7 +1,7 @@
-// 「仮定法過去（未来の妄想）」〜「仮定法未来」の知識カードに対応する四択問題を登録
-// 実行: dart run scripts/seed_four_choice_subjunctive_range.dart
+// 「will(2)推量」の知識カード向け・TOEIC Part 5 風の四択問題を登録
+// 実行: dart run scripts/seed_four_choice_will_epistemic_toeic.dart
 //
-// 注意: 正解が一意・知識理解が前提・解説は正解に至る思考を端的に。
+// 正解一意・推量の will（特に will have + 過去分詞）を知っていないと解けないようにする。
 
 import 'dart:convert';
 import 'dart:io';
@@ -53,41 +53,33 @@ Future<void> httpPatch(String path, Map<String, dynamic> body) async {
 void main() async {
   final items = [
     (
-      knowledgeTitle: '仮定法過去（未来の妄想）',
-      questionText: r'If it _____ tomorrow, we would cancel the picnic.',
-      choices: ['rains', 'rained', 'will rain', 'had rained'],
-      correctIndex: 1,
-      explanation: '主節が would cancel なので仮定法過去。仮定法過去では if 節に過去形を使う。'
-          '未来（tomorrow）の話でも形は同じ。したがって (B) rained。'
-          'rains / will rain は直説法。had rained は仮定法過去完了で主節 would have とペアになる。',
+      knowledgeTitle: 'will(2)推量',
+      questionText:
+          r'By now you _____ the revised schedule we posted on the intranet this morning.',
+      choices: [
+        'will have seen',
+        'see',
+        'are seeing',
+        'saw',
+      ],
+      correctIndex: 0,
+      explanation: '**By now**（いまごろにはもう）と「朝に投稿した」とあるので、「相手はすでに～している**だろう**」という**話し手の推測**を表す。'
+          'ここで学ぶ推量の will のかたちは **will have + 過去分詞**（教材の *You will have heard the news.* と同型）。'
+          'したがって (A) will have seen。**see** は単純現在で時制が合わない。**are seeing** は「見ている最中」で、すでに目を通したという完了の推測にならない。**saw** だけでは by now と結びつきにくく、かつここでは推量の定型ではない。',
     ),
     (
-      knowledgeTitle: '仮定法のbe動詞',
-      questionText: r'If he _____ here now, he would help us.',
-      choices: ['was', 'were', 'is', 'had been'],
-      correctIndex: 1,
-      explanation: '主節が would help なので仮定法過去。仮定法過去の if 節で be 動詞は主語が何でも were。'
-          'したがって (B) were。was は直説法、is は直説法現在、had been は仮定法過去完了の形。',
-    ),
-    (
-      knowledgeTitle: '仮定法過去完了（過去の妄想）',
-      questionText: r'If she _____ harder, she would have passed the exam.',
-      choices: ['studied', 'had studied', 'would study', 'has studied'],
-      correctIndex: 1,
-      explanation: '主節が would have passed なので「過去の妄想」の仮定法過去完了。'
-          'if 節は had ＋ 過去分詞。したがって (B) had studied。'
-          'studied は仮定法過去（主節 would pass）。would study / has studied は if 節の形として不適切。',
-    ),
-    (
-      knowledgeTitle: '仮定法未来',
-      questionText: r'If I _____ win the lottery, I would quit my job.',
-      choices: ['will', 'would', 'were to', 'am to'],
-      correctIndex: 2,
-      explanation: '穴のあとに動詞の原形 **win** が続いているので、「空欄＋原形」がひとかたまりのパターンかどうかを見る。'
-          '仮定法**過去**なら if 節は **過去形**（won / were など）で止まり、いきなり別の原形は続けない。'
-          'だから **If I won** のあとに **win** は来られない。'
-          '一方、仮定法**未来**では **were to ＋ 原形** か **should ＋ 原形** が使える。**were to win** なら文として成立する。'
-          'したがって (C) were to。will / would はこの位置では if 節の形にならない。am to もここでの仮定法の型ではない。',
+      knowledgeTitle: 'will(2)推量',
+      questionText:
+          r'By the time you read this memo, the maintenance team _____ the server issue.',
+      choices: [
+        'will have fixed',
+        'will fix',
+        'fixes',
+        'is fixing',
+      ],
+      correctIndex: 0,
+      explanation: '**By the time you read this**（あなたがこれを読むころには）は「その時点までにすでに～している**だろう**」という見込み・推量に **will have + 過去分詞** を使う。'
+          '単純未来の **will fix** や現在の **fixes** では、「読むころには**もう直し終えている**」という**完了＋推測**が表せない。**is fixing** は進行中だけで、完了の見込みにならない。したがって (A) will have fixed。',
     ),
   ];
 
@@ -142,10 +134,8 @@ void main() async {
     } catch (_) {}
 
     print('  登録済: question_id=$questionId');
-    print('  出題: ${item.questionText}');
-    print('  正解: (${String.fromCharCode(65 + item.correctIndex)}) ${item.choices[item.correctIndex]}');
   }
 
   print('');
-  print('完了。${items.length} 件の知識カード分の四択問題を登録しました。');
+  print('完了。${items.length} 問を登録しました（同一知識タイトルに複数問）。');
 }

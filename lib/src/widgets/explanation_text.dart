@@ -6,11 +6,31 @@ class ExplanationText extends StatelessWidget {
 
   const ExplanationText({super.key, required this.text});
 
+  /// 引用ブロック内の文字。ダークではグレー枠上でも読みやすいようやや明るめの前景色にする。
+  static TextStyle _blockquoteTextStyle(ThemeData theme) {
+    final base = theme.textTheme.bodyLarge!;
+    if (theme.brightness == Brightness.dark) {
+      return base.copyWith(color: const Color(0xFFF0F0F0));
+    }
+    return base;
+  }
+
+  /// 引用ブロックの背景。ダークでは本文エリア（真黒に近い surface）との差を少しつける。
+  static Color _blockquoteBackground(ThemeData theme) {
+    if (theme.brightness == Brightness.dark) {
+      return const Color(0xFF262626);
+    }
+    return theme.colorScheme.surfaceContainerHighest;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final lines = text.split('\n');
     final widgets = <Widget>[];
+
+    final quoteStyle = _blockquoteTextStyle(theme);
+    final quoteBg = _blockquoteBackground(theme);
 
     List<String> blockquoteLines = [];
 
@@ -22,7 +42,7 @@ class ExplanationText extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             margin: const EdgeInsets.only(bottom: 12),
             decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest,
+              color: quoteBg,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Column(
@@ -30,7 +50,7 @@ class ExplanationText extends StatelessWidget {
               children: blockquoteLines
                   .map((line) => Padding(
                         padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: BoldText(text: line, style: theme.textTheme.bodyLarge!),
+                        child: BoldText(text: line, style: quoteStyle),
                       ))
                   .toList(),
             ),
@@ -61,11 +81,9 @@ class ExplanationText extends StatelessWidget {
     }
     flushBlockquote();
 
-    return SelectionArea(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: widgets,
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: widgets,
     );
   }
 }
@@ -99,6 +117,7 @@ class BoldText extends StatelessWidget {
       ));
       i = boldEnd + 2;
     }
-    return RichText(text: TextSpan(children: parts));
+    // RichText は SelectionArea と連携しないため、Android 等で本文が選択できない。
+    return Text.rich(TextSpan(children: parts, style: style));
   }
 }
