@@ -29,6 +29,7 @@ import 'src/screens/learner_login_screen.dart';
 import 'src/screens/memorization_list_screen.dart';
 import 'src/learner_admin.dart';
 import 'src/screens/learner_management_screen.dart';
+import 'src/screens/settings_screen.dart';
 import 'src/screens/teacher_login_screen.dart';
 import 'src/utils/platform_utils.dart';
 
@@ -549,7 +550,6 @@ class _RootScaffoldState extends State<RootScaffold> {
     }
     return LearnerHomeScreen(
       localDatabase: widget.localDatabase,
-      onOpenManage: _role == 'teacher' ? () => setState(() => _index = 2) : null,
     );
   }
 
@@ -563,7 +563,6 @@ class _RootScaffoldState extends State<RootScaffold> {
     }
     return LearnerHomeScreen(
       localDatabase: widget.localDatabase,
-      onOpenManage: _role == 'teacher' ? () => setState(() => _index = 2) : null,
       embedInDesktopMobileFrame: true,
     );
   }
@@ -613,7 +612,7 @@ class _RootScaffoldState extends State<RootScaffold> {
               const SizedBox(height: 8),
               Text(
                 'このアカウントには教材管理の権限がありません。'
-                '権限があるはずの場合は「再読み込み」を試すか、ログアウトして再度ログインしてください。',
+                '権限があるはずの場合は「再読み込み」を試すか、設定からログアウトして再度ログインしてください。',
                 style: Theme.of(context).textTheme.bodySmall,
                 textAlign: TextAlign.center,
               ),
@@ -629,10 +628,14 @@ class _RootScaffoldState extends State<RootScaffold> {
               ),
               const SizedBox(height: 12),
               OutlinedButton.icon(
-                icon: const Icon(Icons.logout),
-                label: const Text('ログアウト'),
-                onPressed: () async {
-                  await appAuthNotifier.logout();
+                icon: const Icon(Icons.settings_outlined),
+                label: const Text('設定'),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (context) => const SettingsScreen(),
+                    ),
+                  );
                 },
               ),
             ],
@@ -1528,10 +1531,14 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
             onPressed: _loading ? null : _showAddSubjectDialog,
           ),
           IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'ログアウト',
-            onPressed: () async {
-              await appAuthNotifier.logout();
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: '設定',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const SettingsScreen(),
+                ),
+              );
             },
           ),
         ],

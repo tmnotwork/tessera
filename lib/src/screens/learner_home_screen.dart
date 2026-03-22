@@ -19,15 +19,11 @@ class LearnerHomeScreen extends StatefulWidget {
   const LearnerHomeScreen({
     super.key,
     this.localDatabase,
-    this.onOpenManage,
     this.embedInDesktopMobileFrame = false,
   });
 
   /// 非 Web で教材データをローカルから読むために渡す（知識一覧など）。
   final LocalDatabase? localDatabase;
-
-  /// 教材管理（編集）画面へ遷移するときに呼ぶ。未指定の場合は何もしない。
-  final VoidCallback? onOpenManage;
 
   /// PC 向け「スマホ幅」タブ用。true のとき学習画面を狭幅フレーム内に収める。
   final bool embedInDesktopMobileFrame;
@@ -150,23 +146,10 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
             },
             tooltip: '設定',
           ),
-          if (widget.onOpenManage != null)
-            TextButton.icon(
-              onPressed: widget.onOpenManage,
-              icon: const Icon(Icons.edit_note, size: 20),
-              label: const Text('教材管理'),
-            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loading ? null : _fetchSubjects,
             tooltip: '再読み込み',
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'ログアウト',
-            onPressed: () async {
-              await appAuthNotifier.logout();
-            },
           ),
         ],
       ),

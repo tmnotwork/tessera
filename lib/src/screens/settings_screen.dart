@@ -67,6 +67,30 @@ class SettingsScreen extends StatelessWidget {
               ),
             ),
           ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 24, 16, 8),
+            child: Text(
+              'アカウント',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          ListTile(
+            leading: Icon(
+              Icons.logout,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            title: Text(
+              'ログアウト',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+            onTap: () async {
+              await appAuthNotifier.logout();
+            },
+          ),
         ],
       ),
     );
