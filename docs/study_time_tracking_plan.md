@@ -3,18 +3,19 @@
 ## 概要
 
 問題（四択・テキスト入力）および知識カードを学習している時間を記録する機能。
+**何をやっていたか（コンテンツ・単元・活動種別）** も合わせて記録し、振り返りや集計に活用できるようにする。
 主にスマホ版での利用を想定する。
 
 ---
 
 ## 計測対象画面
 
-| 画面 | 対象 | 備考 |
-|------|------|------|
-| `question_solve_screen.dart` | 問題を解いている時間 | 四択・テキスト入力 |
-| `knowledge_detail_screen.dart` | 知識カードを読んでいる時間 | 学習者モードのみ |
-| `english_example_solve_screen.dart` | 例文学習の時間 | TTS再生中含む |
-| `memorization_solve_screen.dart` | 暗記カード学習の時間 | 将来的に追加可 |
+| 画面 | 活動種別 (`session_type`) | 記録するコンテンツ情報 | 備考 |
+|------|--------------------------|----------------------|------|
+| `question_solve_screen.dart` | `question` | 問題ID・問題文（先頭50文字）・科目・単元 | 四択・テキスト入力 |
+| `knowledge_detail_screen.dart` | `knowledge` | カードID・カードタイトル・科目・単元 | 学習者モードのみ |
+| `english_example_solve_screen.dart` | `english_example` | 例文ID・例文（先頭50文字）・科目 | TTS再生中含む |
+| `memorization_solve_screen.dart` | `memorization` | カードID・表面テキスト・科目・単元 | 将来的に追加可 |
 
 ---
 
@@ -49,20 +50,28 @@
 
 ```sql
 CREATE TABLE study_sessions (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_type TEXT NOT NULL,     -- 'question' | 'knowledge' | 'english_example' | 'memorization'
-  content_id   TEXT,              -- 問題ID・カードID（任意）
-  subject_id   TEXT,              -- 科目ID（任意）
-  started_at   TEXT NOT NULL,     -- ISO8601 UTC
-  ended_at     TEXT,              -- ISO8601 UTC（NULL = 記録中）
-  duration_sec INTEGER,           -- 計測秒数（ended_at - started_at から休止分を除いた値）
-  created_at   TEXT NOT NULL
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_type  TEXT NOT NULL,   -- 'question' | 'knowledge' | 'english_example' | 'memorization'
+  content_id    TEXT,            -- 問題ID・カードID
+  content_title TEXT,            -- コンテンツ名（問題文・カードタイトル等の先頭50文字）
+  unit          TEXT,            -- 単元名（例：「関係詞」「仮定法」）
+  subject_id    TEXT,            -- 科目ID
+  subject_name  TEXT,            -- 科目名（表示用）
+  tts_sec       INTEGER NOT NULL DEFAULT 0,  -- うちTTS再生中の秒数
+  started_at    TEXT NOT NULL,   -- ISO8601 UTC
+  ended_at      TEXT,            -- ISO8601 UTC（NULL = 記録中）
+  duration_sec  INTEGER,         -- 計測秒数（休止・バックグラウンドを除く）
+  created_at    TEXT NOT NULL
 );
 ```
 
 ### フィールド補足
 
-- `duration_sec`：画面消灯・バックグラウンド時間を除いた**純粋な学習時間**
+- `content_title`：問題文やカードタイトルの先頭50文字程度。完全な本文は保存しない
+- `unit`：knowledge の `unit` フィールド、question の所属単元など。後で「どの単元を何分やったか」を集計するために使う
+- `subject_name`：科目IDだけでは表示が手間なので名前も一緒に保存する（非正規化）
+- `tts_sec`：セッション中に TTS を聞いていた時間。通常の閲覧時間と TTS 視聴時間を分けて把握できる
+- `duration_sec`：画面消灯・バックグラウンド時間を除いた**純粋な学習時間**（TTS時間を含む）
 - `ended_at` が NULL のレコードはアプリ強制終了等による未完了セッション。起動時にクリーンアップする
 
 ### Supabase への同期
@@ -88,8 +97,15 @@ lib/src/services/study_timer_service.dart
 
 ```dart
 class StudyTimerService with WidgetsBindingObserver {
-  // セッション開始
-  void startSession(String sessionType, {String? contentId, String? subjectId});
+  // セッション開始（何をやっているかの情報を渡す）
+  void startSession({
+    required String sessionType,
+    String? contentId,
+    String? contentTitle,   // 問題文・カードタイトル等（先頭50文字）
+    String? unit,           // 単元名
+    String? subjectId,
+    String? subjectName,
+  });
 
   // セッション終了（保存）
   Future<void> endSession();
@@ -115,7 +131,14 @@ class StudyTimerService with WidgetsBindingObserver {
 @override
 void initState() {
   super.initState();
-  StudyTimerService.instance.startSession('knowledge', contentId: widget.knowledgeId);
+  StudyTimerService.instance.startSession(
+    sessionType: 'knowledge',
+    contentId: widget.knowledge.id,
+    contentTitle: widget.knowledge.content,  // カードタイトル
+    unit: widget.knowledge.unit,
+    subjectId: widget.knowledge.subject?.id,
+    subjectName: widget.knowledge.subject?.name,
+  );
 }
 
 @override
@@ -145,9 +168,14 @@ TTS を使う画面では `TtsService` 側のコールバックから `StudyTime
 
 ## 表示・集計（将来フェーズ）
 
+「何をやっていたか」が記録されることで、以下の集計が可能になる。
+
 - 日別・週別の勉強時間グラフ
 - 科目ごとの時間内訳
+- **単元ごとの学習時間**（どの単元を集中的にやっているか）
+- **活動種別の内訳**（問題を解く時間 vs カードを読む時間 vs TTS を聞く時間）
 - 連続学習日数（ストリーク）
+- **最近触ったコンテンツの履歴**（`content_title` を使った学習ログ表示）
 
 フェーズ1では記録のみを実装し、表示は別タスクとする。
 
@@ -173,4 +201,5 @@ TTS を使う画面では `TtsService` 側のコールバックから `StudyTime
 - **アプリ強制終了への対応**：`started_at` だけ記録されて `ended_at` がないセッションはアプリ起動時に `duration_sec = null` として確定させる（または削除する）
 - **画面の重なり**：ダイアログ表示中は `inactive` になることがあるが、短時間なので許容するか、閾値（例：3秒以上の `inactive`）を設けて判断する
 - **マルチセッション**：複数の対象画面を同時に開くことは基本的にない想定（シングルスタック）。念のため同時セッションは防ぐ
-- **プライバシー**：記録するのは時間・種別・ID のみ。問題の回答内容や知識カードの本文は記録しない
+- **記録する内容の範囲**：コンテンツの ID・タイトル先頭50文字・単元名・科目名を記録する。問題の**回答内容**（ユーザーが入力した答え）や知識カードの本文全文は記録しない
+- **`content_title` の切り詰め**：長いテキストは先頭50文字 + `…` で保存する。表示目的の補助情報なので厳密さよりも軽量さを優先する
