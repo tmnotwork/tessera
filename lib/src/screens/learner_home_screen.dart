@@ -1,3 +1,5 @@
+﻿import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -5,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app_route_observer.dart';
 import '../app_scope.dart';
 import '../database/local_database.dart';
+import '../repositories/subject_repository.dart';
 import '../sync/ensure_synced_for_local_read.dart';
 import '../widgets/force_sync_icon_button.dart';
 import 'english_example_list_screen.dart';
@@ -37,11 +40,13 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
 
   /// デスクトップ「スマホ幅」プレビュー時のみ。ホームの [State.context] はこの Navigator より上にあるため、
   /// push は [Navigator.of] ではなくこのキー経由で行う。
-  final GlobalKey<NavigatorState> _mobilePreviewNavKey = GlobalKey<NavigatorState>();
+  final GlobalKey<NavigatorState> _mobilePreviewNavKey =
+      GlobalKey<NavigatorState>();
 
   List<Map<String, dynamic>> _subjects = [];
   bool _loading = true;
   String? _error;
+  bool _isFetchingSubjects = false;
 
   @override
   void initState() {
@@ -53,26 +58,64 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
   }
 
   Future<void> _fetchSubjects() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    if (_isFetchingSubjects) return;
+    _isFetchingSubjects = true;
+    if (mounted) {
+      setState(() {
+        _loading = _subjects.isEmpty;
+        _error = null;
+      });
+    }
     try {
-      await ensureSyncedForLocalRead();
-      if (!mounted) return;
-      final client = Supabase.instance.client;
-      final rows = await client.from('subjects').select().order('display_order');
+      final rows = await _loadSubjectsPrimary();
       if (mounted) {
         setState(() {
-          _subjects = List<Map<String, dynamic>>.from(rows);
+          _subjects = rows;
           _error = null;
+          _loading = false;
         });
       }
+      unawaited(() async {
+        await triggerBackgroundSyncWithThrottle();
+        final freshRows = await _loadSubjectsPrimary();
+        if (!mounted) return;
+        if (!_sameSubjects(_subjects, freshRows)) {
+          setState(() => _subjects = freshRows);
+        }
+      }());
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      _isFetchingSubjects = false;
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadSubjectsPrimary() async {
+    if (widget.localDatabase != null) {
+      final repo = createSubjectRepository(widget.localDatabase);
+      return repo.getSubjectsOrderByDisplayOrder();
+    }
+    final rows = await Supabase.instance.client
+        .from('subjects')
+        .select()
+        .order('display_order');
+    return List<Map<String, dynamic>>.from(rows);
+  }
+
+  bool _sameSubjects(
+      List<Map<String, dynamic>> a, List<Map<String, dynamic>> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i]['id']?.toString() != b[i]['id']?.toString()) return false;
+      if (a[i]['name']?.toString() != b[i]['name']?.toString()) return false;
+      if (a[i]['display_order'] != b[i]['display_order']) return false;
+    }
+    return true;
   }
 
   /// 学習ホームからの遷移。スマホ幅タブではフレーム内 Navigator に積む。
@@ -109,7 +152,9 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
   void _openLearningStatusMenu() {
     _learnerPush(
       MaterialPageRoute(
-        builder: (context) => const LearnerLearningStatusMenuScreen(),
+        builder: (context) => LearnerLearningStatusMenuScreen(
+          localDatabase: widget.localDatabase,
+        ),
       ),
     );
   }
@@ -120,6 +165,17 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
         builder: (context) => const EnglishExampleListScreen(
           isLearnerMode: true,
           readAloudMenuOnly: true,
+        ),
+      ),
+    );
+  }
+
+  void _openEnglishComposition() {
+    _learnerPush(
+      MaterialPageRoute(
+        builder: (context) => const EnglishExampleListScreen(
+          isLearnerMode: true,
+          compositionMenuOnly: true,
         ),
       ),
     );
@@ -139,9 +195,7 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
             icon: const Icon(Icons.settings_outlined),
             onPressed: () {
               _learnerPush(
-                MaterialPageRoute(
-                  builder: (context) => const SettingsScreen(),
-                ),
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
               );
             },
             tooltip: '設定',
@@ -156,53 +210,64 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(_error!, style: Theme.of(context).textTheme.bodyMedium, textAlign: TextAlign.center),
-                        const SizedBox(height: 16),
-                        FilledButton.icon(
-                          onPressed: _fetchSubjects,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('再試行'),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : ListView(
-                  padding: const EdgeInsets.all(16),
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    _MenuCard(
-                      icon: Icons.menu_book,
-                      title: '知識を学ぶ',
-                      subtitle: '解説付きの知識カードを読む',
-                      onTap: _openKnowledgePicker,
+                    Text(
+                      _error!,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                      textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 12),
-                    _MenuCard(
-                      icon: Icons.quiz,
-                      title: '四択問題を解く',
-                      subtitle: '四択クイズに挑戦する',
-                      onTap: _openFourChoiceSolve,
-                    ),
-                    const SizedBox(height: 12),
-                    _MenuCard(
-                      icon: Icons.insights_outlined,
-                      title: '学習状況の確認',
-                      onTap: _openLearningStatusMenu,
-                    ),
-                    const SizedBox(height: 12),
-                    _MenuCard(
-                      icon: Icons.translate,
-                      title: '英語例文',
-                      onTap: _openEnglishExamples,
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: _fetchSubjects,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('再試行'),
                     ),
                   ],
                 ),
+              ),
+            )
+          : ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                _MenuCard(
+                  icon: Icons.menu_book,
+                  title: '知識を学ぶ',
+                  subtitle: '解説付きの知識カードを読む',
+                  onTap: _openKnowledgePicker,
+                ),
+                const SizedBox(height: 12),
+                _MenuCard(
+                  icon: Icons.quiz,
+                  title: '四択問題を解く',
+                  subtitle: '四択クイズに挑戦する',
+                  onTap: _openFourChoiceSolve,
+                ),
+                const SizedBox(height: 12),
+                _MenuCard(
+                  icon: Icons.insights_outlined,
+                  title: '学習状況の確認',
+                  onTap: _openLearningStatusMenu,
+                ),
+                const SizedBox(height: 12),
+                _MenuCard(
+                  icon: Icons.translate,
+                  title: '例文読み上げ',
+                  onTap: _openEnglishExamples,
+                ),
+                const SizedBox(height: 12),
+                _MenuCard(
+                  icon: Icons.edit_note,
+                  title: '英作文出題',
+                  subtitle: 'チャプター別に例文を選んで英作文',
+                  onTap: _openEnglishComposition,
+                ),
+              ],
+            ),
     );
 
     if (!widget.embedInDesktopMobileFrame) {
@@ -217,7 +282,10 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
             final maxH = constraints.maxHeight - 16;
             return Center(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 child: Container(
                   width: _mobilePreviewWidth,
                   height: maxH.clamp(0, double.infinity),
@@ -338,10 +406,13 @@ class LearnerFourChoiceSolveScreen extends StatefulWidget {
   const LearnerFourChoiceSolveScreen({super.key});
 
   @override
-  State<LearnerFourChoiceSolveScreen> createState() => _LearnerFourChoiceSolveScreenState();
+  State<LearnerFourChoiceSolveScreen> createState() =>
+      _LearnerFourChoiceSolveScreenState();
 }
 
-class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScreen> with RouteAware, WidgetsBindingObserver {
+class _LearnerFourChoiceSolveScreenState
+    extends State<LearnerFourChoiceSolveScreen>
+    with RouteAware, WidgetsBindingObserver {
   List<String> _questionIds = [];
   Map<String, List<_QuestionTileItem>> _groupedTiles = {};
   final Set<String> _expandedChapters = {};
@@ -402,7 +473,7 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
       _error = null;
     });
     try {
-      await ensureSyncedForLocalRead();
+      await triggerBackgroundSyncWithThrottle();
       if (!mounted) return;
       final client = Supabase.instance.client;
       final allRows = await client
@@ -430,14 +501,18 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
               .lte('next_review_at', nowIso)
               .order('next_review_at', ascending: true);
           dueQuestionIds = (dueRows as List)
-              .map((r) => (r as Map<String, dynamic>)['question_id']?.toString())
+              .map(
+                (r) => (r as Map<String, dynamic>)['question_id']?.toString(),
+              )
               .where((id) => id != null && id.isNotEmpty)
               .cast<String>()
               .toList();
 
           final stateRows = await client
               .from('question_learning_states')
-              .select('question_id, retrievability, success_streak, lapse_count, reviewed_count, last_is_correct, next_review_at')
+              .select(
+                'question_id, retrievability, success_streak, lapse_count, reviewed_count, last_is_correct, next_review_at',
+              )
               .eq('learner_id', userId);
           for (final raw in stateRows as List) {
             final row = raw as Map<String, dynamic>;
@@ -448,11 +523,16 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
           }
         } catch (e, st) {
           if (kDebugMode) {
-            debugPrint('LearnerFourChoiceSolve: question_learning_states 取得失敗: $e\n$st');
+            debugPrint(
+              'LearnerFourChoiceSolve: question_learning_states 取得失敗: $e\n$st',
+            );
           }
           dueQuestionIds = [];
           if (mounted) {
-            setState(() => _error = '学習状況の取得に失敗しました。同じアカウントでログインしているか、Supabase のマイグレーションを確認してください。\n$e');
+            setState(
+              () => _error =
+                  '学習状況の取得に失敗しました。同じアカウントでログインしているか、Supabase のマイグレーションを確認してください。\n$e',
+            );
           }
         }
       }
@@ -475,11 +555,13 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
             final id = row['id']?.toString();
             if (id == null || id.isEmpty) continue;
             final unit = row['unit']?.toString().trim();
-            final chapterKey =
-                (unit != null && unit.isNotEmpty) ? unit : '（単元なし）';
+            final chapterKey = (unit != null && unit.isNotEmpty)
+                ? unit
+                : '（単元なし）';
             final content = row['content']?.toString().trim();
-            final cardTitle =
-                (content != null && content.isNotEmpty) ? content : '（無題）';
+            final cardTitle = (content != null && content.isNotEmpty)
+                ? content
+                : '（無題）';
             final displayOrder = (row['display_order'] as num?)?.toInt();
             knowledgeMetaById[id] = _KnowledgeMeta(
               chapterKey: chapterKey,
@@ -493,15 +575,17 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
       final allSet = allQuestionIds.toSet();
       final dueUnique = dueQuestionIds.where(allSet.contains).toList();
       final dueSet = dueUnique.toSet();
-      final unseenOrNotDue = allQuestionIds.where((id) => !dueSet.contains(id)).toList();
+      final unseenOrNotDue = allQuestionIds
+          .where((id) => !dueSet.contains(id))
+          .toList();
       final ordered = [...dueUnique, ...unseenOrNotDue];
       final grouped = <String, List<_QuestionTileItem>>{};
       for (final q in allQuestionRows) {
         final qid = q['id']?.toString();
         if (qid == null || qid.isEmpty) continue;
         final knowledgeId = q['knowledge_id']?.toString();
-        final meta = (knowledgeId != null &&
-                knowledgeMetaById.containsKey(knowledgeId))
+        final meta =
+            (knowledgeId != null && knowledgeMetaById.containsKey(knowledgeId))
             ? knowledgeMetaById[knowledgeId]!
             : const _KnowledgeMeta(
                 chapterKey: '（単元なし）',
@@ -510,7 +594,9 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
               );
         final state = stateByQuestion[qid];
         final status = _tileStatusFromState(state);
-        grouped.putIfAbsent(meta.chapterKey, () => []).add(
+        grouped
+            .putIfAbsent(meta.chapterKey, () => [])
+            .add(
               _QuestionTileItem(
                 questionId: qid,
                 status: status,
@@ -567,17 +653,17 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
     if (_questionIds.isEmpty) return;
     Navigator.of(context)
         .push(
-      MaterialPageRoute(
-        builder: (context) => QuestionSolveScreen(
-          questionIds: _questionIds,
-          knowledgeTitle: '四択問題',
-          isLearnerMode: true,
-        ),
-      ),
-    )
+          MaterialPageRoute(
+            builder: (context) => QuestionSolveScreen(
+              questionIds: _questionIds,
+              knowledgeTitle: '四択問題',
+              isLearnerMode: true,
+            ),
+          ),
+        )
         .then((_) {
-      if (mounted) _load();
-    });
+          if (mounted) _load();
+        });
   }
 
   void _startChapterSolve(String chapterKey) {
@@ -586,17 +672,17 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
     final ids = tiles.map((t) => t.questionId).toList();
     Navigator.of(context)
         .push(
-      MaterialPageRoute(
-        builder: (context) => QuestionSolveScreen(
-          questionIds: ids,
-          knowledgeTitle: chapterKey,
-          isLearnerMode: true,
-        ),
-      ),
-    )
+          MaterialPageRoute(
+            builder: (context) => QuestionSolveScreen(
+              questionIds: ids,
+              knowledgeTitle: chapterKey,
+              isLearnerMode: true,
+            ),
+          ),
+        )
         .then((_) {
-      if (mounted) _load();
-    });
+          if (mounted) _load();
+        });
   }
 
   _TileStatus _tileStatusFromState(Map<String, dynamic>? state) {
@@ -610,7 +696,8 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
     if (isInitialKnown) return _TileStatus.remembered;
 
     final nextReviewRaw = state['next_review_at']?.toString();
-    if (nextReviewRaw == null || nextReviewRaw.isEmpty) return _TileStatus.remembered;
+    if (nextReviewRaw == null || nextReviewRaw.isEmpty)
+      return _TileStatus.remembered;
     DateTime? nextReviewAt;
     try {
       nextReviewAt = DateTime.parse(nextReviewRaw).toUtc();
@@ -619,7 +706,9 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
     }
     if (nextReviewAt == null) return _TileStatus.remembered;
     final now = DateTime.now().toUtc();
-    return now.isAfter(nextReviewAt) ? _TileStatus.notRemembered : _TileStatus.remembered;
+    return now.isAfter(nextReviewAt)
+        ? _TileStatus.notRemembered
+        : _TileStatus.remembered;
   }
 
   String _statusLabel(_TileStatus status) {
@@ -677,131 +766,142 @@ class _LearnerFourChoiceSolveScreenState extends State<LearnerFourChoiceSolveScr
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(_error!, style: Theme.of(context).textTheme.bodyMedium, textAlign: TextAlign.center),
-                        const SizedBox(height: 16),
-                        FilledButton.icon(
-                          onPressed: _load,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('再試行'),
-                        ),
-                      ],
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      _error!,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                      textAlign: TextAlign.center,
                     ),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: _load,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('再試行'),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : _questionIds.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.quiz,
+                    size: 64,
+                    color: Theme.of(context).colorScheme.outline,
                   ),
-                )
-              : _questionIds.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.quiz, size: 64, color: Theme.of(context).colorScheme.outline),
-                          const SizedBox(height: 16),
-                          Text(
-                            '四択問題がまだありません',
-                            style: Theme.of(context).textTheme.bodyLarge,
-                          ),
-                        ],
-                      ),
-                    )
-                  : ListView(
-                      padding: const EdgeInsets.fromLTRB(0, 16, 0, 24),
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: FilledButton.icon(
-                            onPressed: _startSolve,
-                            icon: const Icon(Icons.play_arrow),
-                            label: const Text('全問題を解く'),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        ..._groupedTiles.entries.map((entry) {
-                          final chapter = entry.key;
-                          final tiles = entry.value;
-                          final expanded = _expandedChapters.contains(chapter);
-                          return Column(
-                            key: PageStorageKey<String>('four_choice_chapter_$chapter'),
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 4),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: [
-                                    Expanded(
-                                      child: InkWell(
-                                        onTap: () => _startChapterSolve(chapter),
-                                        borderRadius: BorderRadius.circular(8),
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 12,
+                  const SizedBox(height: 16),
+                  Text(
+                    '四択問題がまだありません',
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                ],
+              ),
+            )
+          : ListView(
+              padding: const EdgeInsets.fromLTRB(0, 16, 0, 24),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: FilledButton.icon(
+                    onPressed: _startSolve,
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('全問題を解く'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ..._groupedTiles.entries.map((entry) {
+                  final chapter = entry.key;
+                  final tiles = entry.value;
+                  final expanded = _expandedChapters.contains(chapter);
+                  return Column(
+                    key: PageStorageKey<String>('four_choice_chapter_$chapter'),
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Expanded(
+                              child: InkWell(
+                                onTap: () => _startChapterSolve(chapter),
+                                borderRadius: BorderRadius.circular(8),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 12,
+                                  ),
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      chapter,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w600,
                                           ),
-                                          child: Align(
-                                            alignment: Alignment.centerLeft,
-                                            child: Text(
-                                              chapter,
-                                              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
                                     ),
-                                    TextButton(
-                                      onPressed: () {
-                                        setState(() {
-                                          if (expanded) {
-                                            _expandedChapters.remove(chapter);
-                                          } else {
-                                            _expandedChapters.add(chapter);
-                                          }
-                                        });
-                                      },
-                                      child: Text(expanded ? '閉じる' : '開く'),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              if (expanded)
-                                ...tiles.map(
-                                  (item) => ListTile(
-                                    contentPadding: const EdgeInsets.only(
-                                      left: 24,
-                                      right: 16,
-                                    ),
-                                    title: Text(
-                                      item.cardTitle,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    trailing: _statusMark(context, item.status),
-                                    onTap: () async {
-                                      await Navigator.of(context).push(
-                                        MaterialPageRoute(
-                                          builder: (context) => QuestionSolveScreen(
-                                            questionIds: [item.questionId],
-                                            knowledgeTitle: item.cardTitle,
-                                            isLearnerMode: true,
-                                          ),
-                                        ),
-                                      );
-                                      if (mounted) _load();
-                                    },
                                   ),
                                 ),
-                              const Divider(height: 1),
-                            ],
-                          );
-                        }),
-                      ],
-                    ),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                setState(() {
+                                  if (expanded) {
+                                    _expandedChapters.remove(chapter);
+                                  } else {
+                                    _expandedChapters.add(chapter);
+                                  }
+                                });
+                              },
+                              child: Text(expanded ? '閉じる' : '開く'),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (expanded)
+                        ...tiles.map(
+                          (item) => ListTile(
+                            contentPadding: const EdgeInsets.only(
+                              left: 24,
+                              right: 16,
+                            ),
+                            title: Text(
+                              item.cardTitle,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: _statusMark(context, item.status),
+                            onTap: () async {
+                              await Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (context) => QuestionSolveScreen(
+                                    questionIds: [item.questionId],
+                                    knowledgeTitle: item.cardTitle,
+                                    isLearnerMode: true,
+                                  ),
+                                ),
+                              );
+                              if (mounted) _load();
+                            },
+                          ),
+                        ),
+                      const Divider(height: 1),
+                    ],
+                  );
+                }),
+              ],
+            ),
     );
   }
 }
@@ -870,9 +970,15 @@ class _MenuCard extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: scheme.primaryContainer.withValues(alpha: 0.6),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: scheme.outline.withValues(alpha: 0.35)),
+                  border: Border.all(
+                    color: scheme.outline.withValues(alpha: 0.35),
+                  ),
                 ),
-                child: Icon(icon, size: 28, color: Theme.of(context).colorScheme.onPrimaryContainer),
+                child: Icon(
+                  icon,
+                  size: 28,
+                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                ),
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -881,21 +987,26 @@ class _MenuCard extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     if (subtitle != null && subtitle!.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(
                         subtitle!,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
-                            ),
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ],
                 ),
               ),
-              Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              Icon(
+                Icons.chevron_right,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ],
           ),
         ),

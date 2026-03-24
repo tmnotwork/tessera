@@ -1,16 +1,20 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/english_example.dart';
+import '../supabase/english_example_composition_state_remote.dart';
 import '../supabase/english_example_learning_state_remote.dart';
 import '../sync/ensure_synced_for_local_read.dart';
+import '../utils/english_example_knowledge_order.dart';
 import '../utils/english_example_review_filter.dart';
+import 'english_example_composition_chapter_list_screen.dart';
+import 'english_example_composition_screen.dart';
 import 'english_example_solve_screen.dart';
 
 /// 出題モードの種類
 enum _StudyFilter {
   dueToday, // 今日が復習日のものだけ
-  all,       // 全件
+  all, // 全件
 }
 
 class EnglishExampleListScreen extends StatefulWidget {
@@ -20,6 +24,7 @@ class EnglishExampleListScreen extends StatefulWidget {
     this.subjectName,
     this.isLearnerMode = false,
     this.readAloudMenuOnly = false,
+    this.compositionMenuOnly = false,
   });
 
   final String? subjectId;
@@ -31,8 +36,12 @@ class EnglishExampleListScreen extends StatefulWidget {
   /// true かつ [isLearnerMode]: 一覧ではなく「チャプターごとに出題」「復習モード」の2メニューのみ表示
   final bool readAloudMenuOnly;
 
+  /// true かつ [isLearnerMode]: チャプター一覧 → 問題一覧 → [EnglishExampleCompositionScreen]
+  final bool compositionMenuOnly;
+
   @override
-  State<EnglishExampleListScreen> createState() => _EnglishExampleListScreenState();
+  State<EnglishExampleListScreen> createState() =>
+      _EnglishExampleListScreenState();
 }
 
 class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
@@ -44,6 +53,9 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   /// example_id → 学習状態（learner のみ）
   Map<String, Map<String, dynamic>> _learningStates = {};
 
+  /// example_id → 英作文記録（英作文メニュー時のみ取得）
+  Map<String, Map<String, dynamic>> _compositionStates = {};
+
   bool _loading = true;
   bool _schemaMissing = false;
   String? _error;
@@ -54,6 +66,9 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
 
   bool get _readAloudMenuOnly =>
       widget.isLearnerMode && widget.readAloudMenuOnly;
+
+  bool get _compositionMenuOnly =>
+      widget.isLearnerMode && widget.compositionMenuOnly;
 
   @override
   void initState() {
@@ -72,42 +87,47 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       _error = null;
     });
     try {
-      await ensureSyncedForLocalRead();
+      await triggerBackgroundSyncWithThrottle();
       if (!mounted) return;
 
       final knowledge = widget.subjectId == null
           ? await _client
-              .from('knowledge')
-              .select('id, content, unit')
-              .order('display_order', ascending: true)
-              .order('created_at', ascending: true)
+                .from('knowledge')
+                .select('id, content, unit')
+                .order('display_order', ascending: true)
+                .order('created_at', ascending: true)
           : await _client
-              .from('knowledge')
-              .select('id, content, unit')
-              .eq('subject_id', widget.subjectId!)
-              .order('display_order', ascending: true)
-              .order('created_at', ascending: true);
+                .from('knowledge')
+                .select('id, content, unit')
+                .eq('subject_id', widget.subjectId!)
+                .order('display_order', ascending: true)
+                .order('created_at', ascending: true);
 
       List<Map<String, dynamic>> examples = [];
       try {
         final rows = widget.subjectId == null
             ? await _client
-                .from('english_examples')
-                .select('id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, '
-                    'knowledge:knowledge_id(id, content, unit)')
-                .order('display_order', ascending: true)
-                .order('created_at', ascending: true)
+                  .from('english_examples')
+                  .select(
+                    'id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, '
+                    'knowledge:knowledge_id(id, content, unit)',
+                  )
+                  .order('display_order', ascending: true)
+                  .order('created_at', ascending: true)
             : await _client
-                .from('english_examples')
-                .select('id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, '
-                    'knowledge:knowledge_id(id, content, unit)')
-                .eq('knowledge.subject_id', widget.subjectId!)
-                .order('display_order', ascending: true)
-                .order('created_at', ascending: true);
+                  .from('english_examples')
+                  .select(
+                    'id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, '
+                    'knowledge:knowledge_id(id, content, unit)',
+                  )
+                  .eq('knowledge.subject_id', widget.subjectId!)
+                  .order('display_order', ascending: true)
+                  .order('created_at', ascending: true);
         examples = List<Map<String, dynamic>>.from(rows);
       } on PostgrestException catch (e) {
         final missingTable =
-            e.code == 'PGRST205' && e.message.contains('public.english_examples');
+            e.code == 'PGRST205' &&
+            e.message.contains('public.english_examples');
         if (!missingTable) rethrow;
         if (!mounted) return;
         setState(() {
@@ -128,11 +148,23 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
         );
       }
 
+      Map<String, Map<String, dynamic>> compositionStates = {};
+      if (_compositionMenuOnly && _learnerId != null && examples.isNotEmpty) {
+        final ids = examples.map((e) => e['id'] as String).toList();
+        compositionStates =
+            await EnglishExampleCompositionStateRemote.fetchStates(
+              client: _client,
+              learnerId: _learnerId!,
+              exampleIds: ids,
+            );
+      }
+
       if (!mounted) return;
       setState(() {
         _items = examples;
         _knowledgeRows = List<Map<String, dynamic>>.from(knowledge);
         _learningStates = states;
+        _compositionStates = compositionStates;
       });
     } catch (e) {
       if (!mounted) return;
@@ -172,8 +204,9 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
     List<Map<String, dynamic>> targetItems, {
     String? sessionDescriptor,
   }) {
-    final examples =
-        targetItems.map((e) => EnglishExample.fromRow(Map<String, dynamic>.from(e))).toList();
+    final examples = targetItems
+        .map((e) => EnglishExample.fromRow(Map<String, dynamic>.from(e)))
+        .toList();
 
     final initialStates = <String, Map<String, dynamic>>{};
     for (final ex in examples) {
@@ -181,16 +214,18 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       if (s != null) initialStates[ex.id] = s;
     }
 
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => EnglishExampleSolveScreen(
-          examples: examples,
-          subjectName: widget.subjectName,
-          sessionDescriptor: sessionDescriptor,
-          initialStates: initialStates,
-        ),
-      ),
-    ).then((_) => _load()); // 戻ったら状態を再読込
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute<void>(
+            builder: (context) => EnglishExampleSolveScreen(
+              examples: examples,
+              subjectName: widget.subjectName,
+              sessionDescriptor: sessionDescriptor,
+              initialStates: initialStates,
+            ),
+          ),
+        )
+        .then((_) => _load()); // 戻ったら状態を再読込
   }
 
   /// knowledge.unit（参考書チャプター）ごとにグループ化し、表示順の先頭が早い単元ほど上に並べる。
@@ -200,17 +235,13 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       final u = _unitKeyFromItem(item);
       map.putIfAbsent(u, () => []).add(item);
     }
-    int minDisplayOrder(List<Map<String, dynamic>> xs) {
-      var m = 1 << 30;
-      for (final e in xs) {
-        final o = e['display_order'] as int?;
-        if (o != null && o < m) m = o;
-      }
-      return m;
-    }
-
     final entries = map.entries.toList()
-      ..sort((a, b) => minDisplayOrder(a.value).compareTo(minDisplayOrder(b.value)));
+      ..sort((a, b) {
+        final c = minKnowledgeDisplayOrderInChapter(a.value)
+            .compareTo(minKnowledgeDisplayOrderInChapter(b.value));
+        if (c != 0) return c;
+        return a.key.compareTo(b.key);
+      });
     return entries;
   }
 
@@ -225,9 +256,9 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
 
   void _startReviewMode() {
     if (_learnerId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('復習モードはログイン後に利用できます。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('復習モードはログイン後に利用できます。')));
       return;
     }
 
@@ -238,9 +269,9 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
     }).toList();
 
     if (targets.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('復習モードの対象となる例文がありません。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('復習モードの対象となる例文がありません。')));
       return;
     }
 
@@ -266,11 +297,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
         for (final e in chapters) ...[
           const Divider(height: 1),
           ListTile(
-            title: Text(
-              e.key,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
+            title: Text(e.key, maxLines: 2, overflow: TextOverflow.ellipsis),
             trailing: const Icon(Icons.chevron_right),
             onTap: _loading
                 ? null
@@ -280,6 +307,119 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
                       List<Map<String, dynamic>>.from(e.value),
                       sessionDescriptor: '単元「$label」',
                     );
+                  },
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// 英作文：未挑戦、または直近が不正解のときに再出題対象とする。
+  static bool _compositionNeedsDrill(Map<String, dynamic>? state) {
+    if (state == null) return true;
+    final attempts = (state['attempts'] as num?)?.toInt() ?? 0;
+    if (attempts <= 0) return true;
+    final last = state['last_answer_correct'] as bool?;
+    if (last == false) return true;
+    return false;
+  }
+
+  /// [_items] の並びを保ったまま、英作文の要練習だけ。
+  List<Map<String, dynamic>> get _compositionDrillTargets {
+    return _items.where((item) {
+      final id = item['id'] as String?;
+      if (id == null) return false;
+      return _compositionNeedsDrill(_compositionStates[id]);
+    }).toList();
+  }
+
+  void _startCompositionDrillMode() {
+    if (_learnerId == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('このモードはログイン後に利用できます。')));
+      return;
+    }
+    final targets = _compositionDrillTargets;
+    if (targets.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('未回答・不正解の例文はありません。')));
+      return;
+    }
+    _startCompositionSolve(
+      List<Map<String, dynamic>>.from(targets),
+      sessionDescriptor: '未回答・不正解',
+    );
+  }
+
+  void _startCompositionSolve(
+    List<Map<String, dynamic>> targetItems, {
+    required String sessionDescriptor,
+  }) {
+    final examples = targetItems
+        .map((e) => EnglishExample.fromRow(Map<String, dynamic>.from(e)))
+        .toList();
+    Navigator.of(context)
+        .push<void>(
+          MaterialPageRoute<void>(
+            builder: (context) => EnglishExampleCompositionScreen(
+              examples: examples,
+              subjectName: widget.subjectName ?? '英作文出題',
+              sessionDescriptor: sessionDescriptor,
+            ),
+          ),
+        )
+        .then((_) => _load());
+  }
+
+  Widget _buildCompositionMenuBody() {
+    if (_items.isEmpty) {
+      return const Center(child: Text('この科目の例文はまだありません'));
+    }
+
+    final chapters = _chaptersOrdered();
+
+    final drillCount = _compositionDrillTargets.length;
+
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      children: [
+        ListTile(
+          title: const Text('未回答・不正解をまとめて'),
+          subtitle: Text(
+            _learnerId == null
+                ? 'ログインすると記録に基づいて絞り込みます'
+                : drillCount == 0
+                ? 'いまは対象がありません'
+                : '$drillCount 問',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: _loading ? null : _startCompositionDrillMode,
+        ),
+        for (final e in chapters) ...[
+          const Divider(height: 1),
+          ListTile(
+            title: Text(e.key, maxLines: 2, overflow: TextOverflow.ellipsis),
+            subtitle: Text('${e.value.length} 問'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _loading
+                ? null
+                : () {
+                    Navigator.of(context)
+                        .push<void>(
+                          MaterialPageRoute<void>(
+                            builder: (context) =>
+                                EnglishExampleCompositionChapterListScreen(
+                                  chapterTitle: e.key,
+                                  items: List<Map<String, dynamic>>.from(
+                                    e.value,
+                                  ),
+                                  subjectName: widget.subjectName,
+                                ),
+                          ),
+                        )
+                        .then((_) => _load());
                   },
           ),
         ],
@@ -313,17 +453,23 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       return;
     }
 
-    final frontController =
-        TextEditingController(text: current?['front_ja']?.toString() ?? '');
-    final backController =
-        TextEditingController(text: current?['back_en']?.toString() ?? '');
-    final explanationController =
-        TextEditingController(text: current?['explanation']?.toString() ?? '');
-    final supplementController =
-        TextEditingController(text: current?['supplement']?.toString() ?? '');
-    final orderController =
-        TextEditingController(text: current?['display_order']?.toString() ?? '');
-    String? selectedKnowledgeId = current?['knowledge_id']?.toString() ??
+    final frontController = TextEditingController(
+      text: current?['front_ja']?.toString() ?? '',
+    );
+    final backController = TextEditingController(
+      text: current?['back_en']?.toString() ?? '',
+    );
+    final explanationController = TextEditingController(
+      text: current?['explanation']?.toString() ?? '',
+    );
+    final supplementController = TextEditingController(
+      text: current?['supplement']?.toString() ?? '',
+    );
+    final orderController = TextEditingController(
+      text: current?['display_order']?.toString() ?? '',
+    );
+    String? selectedKnowledgeId =
+        current?['knowledge_id']?.toString() ??
         (candidates.isNotEmpty ? candidates.first['id']?.toString() : null);
 
     final saved = await showDialog<bool>(
@@ -544,19 +690,41 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final baseTitle = widget.subjectName == null || widget.subjectName!.isEmpty
+    final learnerReadAloudBase =
+        widget.subjectName == null || widget.subjectName!.isEmpty
+        ? '例文読み上げ'
+        : '${widget.subjectName} · 例文読み上げ';
+    final learnerCompositionBase =
+        widget.subjectName == null || widget.subjectName!.isEmpty
+        ? '英作文出題'
+        : '${widget.subjectName} · 英作文出題';
+    final teacherBase =
+        widget.subjectName == null || widget.subjectName!.isEmpty
         ? '英語例文'
         : '${widget.subjectName} · 英語例文';
+    final String baseTitle;
+    if (!widget.isLearnerMode) {
+      baseTitle = teacherBase;
+    } else if (_compositionMenuOnly) {
+      baseTitle = learnerCompositionBase;
+    } else {
+      baseTitle = learnerReadAloudBase;
+    }
     final title = widget.isLearnerMode ? baseTitle : '$baseTitle DB';
 
     final filtered = _filteredItems;
-    final dueCount = widget.isLearnerMode ? _filteredItemsCount(_StudyFilter.dueToday) : 0;
+    final dueCount = widget.isLearnerMode
+        ? _filteredItemsCount(_StudyFilter.dueToday)
+        : 0;
 
     return Scaffold(
       appBar: AppBar(
         title: Text(title),
         actions: [
-          if (widget.isLearnerMode && !_readAloudMenuOnly && _items.isNotEmpty) ...[
+          if (widget.isLearnerMode &&
+              !_readAloudMenuOnly &&
+              !_compositionMenuOnly &&
+              _items.isNotEmpty) ...[
             _FilterToggleButton(
               current: _studyFilter,
               dueCount: dueCount,
@@ -579,41 +747,44 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       floatingActionButton: widget.isLearnerMode
           ? null
           : FloatingActionButton.extended(
-              onPressed: _loading || _schemaMissing ? null : () => _openEditor(),
+              onPressed: _loading || _schemaMissing
+                  ? null
+                  : () => _openEditor(),
               icon: const Icon(Icons.add),
               label: const Text('追加'),
             ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text('読み込みに失敗しました\n$_error',
-                            textAlign: TextAlign.center),
-                        const SizedBox(height: 12),
-                        FilledButton.icon(
-                          onPressed: _load,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('再試行'),
-                        ),
-                      ],
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('読み込みに失敗しました\n$_error', textAlign: TextAlign.center),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: _load,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('再試行'),
                     ),
-                  ),
-                )
-              : _readAloudMenuOnly
-                  ? _buildReadAloudMenuBody()
-                  : filtered.isEmpty
-                      ? _buildEmpty()
-                      : ListView.separated(
-                          itemCount: filtered.length,
-                          separatorBuilder: (_, _) => const Divider(height: 1),
-                          itemBuilder: (context, index) =>
-                              _buildListItem(context, filtered[index]),
-                        ),
+                  ],
+                ),
+              ),
+            )
+          : _compositionMenuOnly
+          ? _buildCompositionMenuBody()
+          : _readAloudMenuOnly
+          ? _buildReadAloudMenuBody()
+          : filtered.isEmpty
+          ? _buildEmpty()
+          : ListView.separated(
+              itemCount: filtered.length,
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (context, index) =>
+                  _buildListItem(context, filtered[index]),
+            ),
     );
   }
 
@@ -632,12 +803,18 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   }
 
   Widget _buildEmpty() {
-    if (widget.isLearnerMode && _studyFilter == _StudyFilter.dueToday && _items.isNotEmpty) {
+    if (widget.isLearnerMode &&
+        _studyFilter == _StudyFilter.dueToday &&
+        _items.isNotEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.check_circle_outline, size: 64, color: Colors.green),
+            const Icon(
+              Icons.check_circle_outline,
+              size: 64,
+              color: Colors.green,
+            ),
             const SizedBox(height: 16),
             const Text('今日の復習はすべて完了しました！', style: TextStyle(fontSize: 16)),
             const SizedBox(height: 8),
@@ -668,9 +845,12 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
           if (!widget.isLearnerMode && backEn.isNotEmpty)
             Text(backEn, maxLines: 1, overflow: TextOverflow.ellipsis),
           if ((knowledgeTitle ?? '').isNotEmpty)
-            Text('知識: $knowledgeTitle', maxLines: 1, overflow: TextOverflow.ellipsis),
-          if (widget.isLearnerMode && state != null)
-            _buildStateLine(state),
+            Text(
+              '知識: $knowledgeTitle',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          if (widget.isLearnerMode && state != null) _buildStateLine(state),
         ],
       ),
       isThreeLine: widget.isLearnerMode && state != null,

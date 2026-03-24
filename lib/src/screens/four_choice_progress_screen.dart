@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+﻿import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -79,7 +79,7 @@ class _FourChoiceProgressScreenState extends State<FourChoiceProgressScreen> wit
       _error = null;
     });
     try {
-      await ensureSyncedForLocalRead();
+      await triggerBackgroundSyncWithThrottle();
       if (!mounted) return;
       final client = Supabase.instance.client;
       final rows = await client

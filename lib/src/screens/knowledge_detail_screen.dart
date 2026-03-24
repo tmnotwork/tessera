@@ -1,3 +1,5 @@
+﻿import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,13 +12,15 @@ import '../models/knowledge.dart';
 import '../repositories/knowledge_repository.dart';
 import '../sync/ensure_synced_for_local_read.dart';
 import '../services/knowledge_delete_flow.dart';
+import '../services/study_timer_service.dart';
 import '../sync/knowledge_save_remote_status.dart';
 import '../utils/platform_utils.dart';
 import '../widgets/edit_intents.dart';
 import '../widgets/explanation_text.dart';
+import '../supabase/english_example_composition_state_remote.dart';
 import '../supabase/english_example_learning_state_remote.dart';
 import '../utils/knowledge_learner_mem_status.dart';
-import 'english_example_solve_screen.dart';
+import 'english_example_composition_screen.dart';
 import 'knowledge_edit_screen.dart';
 import 'question_solve_screen.dart';
 
@@ -88,11 +92,15 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
   final Map<String, List<EnglishExample>> _englishExamplesByKnowledgeId = {};
   /// 学習者向け：example_id -> SM-2 行（読み上げ・四択で共有）
   final Map<String, Map<String, dynamic>> _englishExampleLearningStates = {};
+  /// 学習者向け：example_id -> 英作文モードの記録（読み上げとは別集計）
+  final Map<String, Map<String, dynamic>> _englishExampleCompositionStates = {};
   /// 学習者向け：question_id -> 四択などの学習状態
   final Map<String, Map<String, dynamic>> _questionLearningStates = {};
   /// questions.id -> question_type（四択判定用）
   final Map<String, String> _questionTypeById = {};
   bool _showManageEdit = false;
+  /// 勉強時間セッションと同期済みの PageView インデックス（初回 onPageChanged の二重開始防止）
+  int _studySyncedPageIndex = -1;
 
   @override
   void initState() {
@@ -105,6 +113,8 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
     _loadLinkedQuestions();
     _loadEnglishExamplesForLearner();
     if (widget.isLearnerMode) {
+      _studySyncedPageIndex = _currentIndex;
+      unawaited(_syncLearnerStudySession());
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
         if (await shouldShowLearnerFlowManageShortcut()) {
@@ -112,6 +122,23 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
         }
       });
     }
+  }
+
+  Future<void> _syncLearnerStudySession() async {
+    if (!widget.isLearnerMode || _allKnowledge.isEmpty) return;
+    await StudyTimerService.instance.endSession();
+    if (!mounted || !widget.isLearnerMode) return;
+    final k = _allKnowledge[_currentIndex];
+    final subjectId = widget.subjectId ?? k.subjectId;
+    final subjectName = widget.subjectName ?? k.subject;
+    await StudyTimerService.instance.startSession(
+      sessionType: 'knowledge',
+      contentId: k.id,
+      contentTitle: k.content,
+      unit: k.unit,
+      subjectId: subjectId,
+      subjectName: subjectName,
+    );
   }
 
   /// 画面の Knowledge.id（`local_*` 可）→ Supabase `knowledge.id`（UUID）
@@ -177,6 +204,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
         setState(() {
           _englishExamplesByKnowledgeId.clear();
           _englishExampleLearningStates.clear();
+          _englishExampleCompositionStates.clear();
         });
         return;
       }
@@ -211,6 +239,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
       }
       final learnerId = client.auth.currentUser?.id;
       var states = <String, Map<String, dynamic>>{};
+      var compStates = <String, Map<String, dynamic>>{};
       if (learnerId != null) {
         final exampleIds = <String>[];
         for (final list in map.values) {
@@ -220,6 +249,11 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
         }
         if (exampleIds.isNotEmpty) {
           states = await EnglishExampleLearningStateRemote.fetchStates(
+            client: client,
+            learnerId: learnerId,
+            exampleIds: exampleIds,
+          );
+          compStates = await EnglishExampleCompositionStateRemote.fetchStates(
             client: client,
             learnerId: learnerId,
             exampleIds: exampleIds,
@@ -234,6 +268,9 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
         _englishExampleLearningStates
           ..clear()
           ..addAll(states);
+        _englishExampleCompositionStates
+          ..clear()
+          ..addAll(compStates);
       });
     } catch (_) {}
   }
@@ -243,7 +280,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
   Future<void> _loadLinkedQuestions() async {
     if (_allKnowledge.isEmpty) return;
     try {
-      await ensureSyncedForLocalRead();
+      await triggerBackgroundSyncWithThrottle();
       if (!mounted) return;
       final client = Supabase.instance.client;
       final ctx = await _knowledgeSupabaseQueryContext();
@@ -382,6 +419,9 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
 
   @override
   void dispose() {
+    if (widget.isLearnerMode) {
+      unawaited(StudyTimerService.instance.endSession());
+    }
     _pageController.dispose();
     _explanationController.dispose();
     _titleController.dispose();
@@ -403,6 +443,10 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
       _devCompleted = _savedDevCompleted[k.id] ?? k.devCompleted;
       _tags = List.from(_savedTags[k.id] ?? k.tags);
     });
+    if (widget.isLearnerMode && index != _studySyncedPageIndex) {
+      _studySyncedPageIndex = index;
+      unawaited(_syncLearnerStudySession());
+    }
   }
 
   void _goToIndex(int index) {
@@ -993,6 +1037,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
           examples: examples,
           questionStates: _questionLearningStates,
           exampleStates: _englishExampleLearningStates,
+          exampleCompositionStates: _englishExampleCompositionStates,
           size: 28,
         ),
       ),
@@ -1007,14 +1052,6 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
     final ids = _linkedQuestions[knowledge.id];
     final hasQuestions = ids != null && ids.isNotEmpty;
     if (!hasExamples && !hasQuestions) return const SizedBox.shrink();
-
-    final initialStates = <String, Map<String, dynamic>>{};
-    if (exList != null) {
-      for (final ex in exList) {
-        final s = _englishExampleLearningStates[ex.id];
-        if (s != null) initialStates[ex.id] = s;
-      }
-    }
 
     List<String>? orderedQuestionIds;
     if (hasQuestions) {
@@ -1061,17 +1098,16 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
           if (hasExamples) ...[
             TextButton.icon(
               style: linkStyle,
-              icon: const Icon(Icons.record_voice_over, size: iconSize),
-              label: const Text('例文暗記'),
+              icon: const Icon(Icons.edit_note, size: iconSize),
+              label: const Text('英作文'),
               onPressed: () {
                 Navigator.of(context)
                     .push<void>(
                   MaterialPageRoute<void>(
-                    builder: (context) => EnglishExampleSolveScreen(
+                    builder: (context) => EnglishExampleCompositionScreen(
                       examples: exList!,
-                      subjectName: knowledge.title,
-                      initialStates: initialStates,
-                      cardMode: true,
+                      subjectName: widget.subjectName ?? knowledge.title,
+                      sessionDescriptor: knowledge.title,
                     ),
                   ),
                 )

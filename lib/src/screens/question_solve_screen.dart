@@ -1,3 +1,4 @@
+﻿import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -7,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app_scope.dart';
 import '../models/knowledge.dart';
 import '../supabase/question_learning_state_remote.dart';
+import '../services/study_timer_service.dart';
 import '../sync/ensure_synced_for_local_read.dart';
 import '../sync/sync_engine.dart';
 import 'four_choice_create_screen.dart';
@@ -55,6 +57,12 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
   }
 
   @override
+  void dispose() {
+    unawaited(StudyTimerService.instance.endSession());
+    super.dispose();
+  }
+
+  @override
   void initState() {
     super.initState();
     _loadQuestion();
@@ -77,8 +85,32 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
     if (updated == true && mounted) _loadQuestion();
   }
 
+  Future<void> _syncQuestionStudySession() async {
+    if (!mounted || _question == null) return;
+    final id = _question!['id']?.toString();
+    final text = _question!['question_text']?.toString();
+    String? unit;
+    String? subjectId;
+    String? subjectName;
+    if (_linkedKnowledge.isNotEmpty) {
+      final k = _linkedKnowledge.first;
+      unit = k.unit;
+      subjectId = k.subjectId;
+      subjectName = k.subject;
+    }
+    await StudyTimerService.instance.startSession(
+      sessionType: 'question',
+      contentId: id,
+      contentTitle: text,
+      unit: unit,
+      subjectId: subjectId,
+      subjectName: subjectName,
+    );
+  }
+
   Future<void> _loadQuestion() async {
     if (_index >= widget.questionIds.length) return;
+    await StudyTimerService.instance.endSession();
     setState(() {
       _loading = true;
       _error = null;
@@ -89,7 +121,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
       _answered = false;
     });
     try {
-      await ensureSyncedForLocalRead();
+      await triggerBackgroundSyncWithThrottle();
       if (!mounted) return;
       final client = Supabase.instance.client;
       final id = widget.questionIds[_index];
@@ -172,6 +204,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
           _linkedKnowledge = linked;
           _loading = false;
         });
+        unawaited(_syncQuestionStudySession());
       }
     } catch (e) {
       if (mounted) {

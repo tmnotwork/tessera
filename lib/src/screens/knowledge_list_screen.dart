@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -7,6 +9,7 @@ import '../database/local_database.dart';
 import '../models/english_example.dart';
 import '../models/knowledge.dart';
 import '../repositories/knowledge_repository.dart';
+import '../supabase/english_example_composition_state_remote.dart';
 import '../supabase/english_example_learning_state_remote.dart';
 import '../sync/ensure_synced_for_local_read.dart';
 import '../sync/sync_engine.dart';
@@ -46,6 +49,7 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
   bool _isLoading = true;
   String? _error;
   String? _filterTag;
+  bool _isLoadInFlight = false;
 
   /// 学習者一覧：各知識に紐づく問題ID（表示用 knowledge.id キー）
   final Map<String, List<String>> _learnerLinkedQuestionIds = {};
@@ -53,6 +57,7 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
   final Map<String, Map<String, dynamic>> _learnerQuestionStates = {};
   final Map<String, List<EnglishExample>> _learnerExamplesByKnowledge = {};
   final Map<String, Map<String, dynamic>> _learnerExampleStates = {};
+  final Map<String, Map<String, dynamic>> _learnerExampleCompositionStates = {};
 
   List<Knowledge> get _filteredItems {
     if (_filterTag == null) return _items;
@@ -206,12 +211,14 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
   }
 
   Future<void> _load() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-    await ensureSyncedForLocalRead();
-    if (!mounted) return;
+    if (_isLoadInFlight) return;
+    _isLoadInFlight = true;
+    if (mounted) {
+      setState(() {
+        _isLoading = _items.isEmpty;
+        _error = null;
+      });
+    }
 
     final dataSource = widget.localDatabase != null ? 'LocalDB' : 'Supabase';
     if (kDebugMode) {
@@ -232,14 +239,49 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
           list = await _mergeLocalWithSupabase(list);
         }
         sortKnowledgeByChapterBlocks(list);
-        if (mounted) setState(() => _items = list);
-        if (mounted && widget.isLearnerMode) await _loadLearnerPracticeSidecar();
+        if (mounted) {
+          setState(() {
+            _items = list;
+            _isLoading = false;
+          });
+        }
+        if (mounted && widget.isLearnerMode) {
+          unawaited(_loadLearnerPracticeSidecar());
+        }
       } else {
         final list = await _fetchKnowledgeFromSupabase();
         sortKnowledgeByChapterBlocks(list);
-        if (mounted) setState(() => _items = list);
-        if (mounted && widget.isLearnerMode) await _loadLearnerPracticeSidecar();
+        if (mounted) {
+          setState(() {
+            _items = list;
+            _isLoading = false;
+          });
+        }
+        if (mounted && widget.isLearnerMode) {
+          unawaited(_loadLearnerPracticeSidecar());
+        }
       }
+
+      unawaited(() async {
+        await triggerBackgroundSyncWithThrottle();
+        if (!mounted) return;
+        final repo = widget.localDatabase != null
+            ? createKnowledgeRepository(widget.localDatabase)
+            : null;
+        List<Knowledge> refreshed;
+        if (repo != null) {
+          refreshed = await repo.getBySubject(widget.subjectId);
+          refreshed = await _mergeLocalWithSupabase(refreshed);
+        } else {
+          refreshed = await _fetchKnowledgeFromSupabase();
+        }
+        sortKnowledgeByChapterBlocks(refreshed);
+        if (!mounted) return;
+        final changed = !_sameKnowledgeIds(_items, refreshed);
+        if (changed) {
+          setState(() => _items = refreshed);
+        }
+      }());
     } catch (e, st) {
       if (kDebugMode) {
         debugPrint('[KnowledgeListScreen._load] FAILED: $e');
@@ -248,7 +290,18 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
       if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _isLoading = false);
+      _isLoadInFlight = false;
     }
+  }
+
+  bool _sameKnowledgeIds(List<Knowledge> a, List<Knowledge> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id) return false;
+      if (a[i].displayOrder != b[i].displayOrder) return false;
+      if (a[i].content != b[i].content) return false;
+    }
+    return true;
   }
 
   Future<Map<String, String>> _displayKnowledgeIdToSupabaseIdForList() async {
@@ -306,8 +359,6 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
   Future<void> _loadLearnerPracticeSidecar() async {
     if (!widget.isLearnerMode || _items.isEmpty) return;
     try {
-      await ensureSyncedForLocalRead();
-      if (!mounted) return;
       final client = Supabase.instance.client;
       final ctx = await _knowledgeSupabaseQueryContextForList();
       final normalizedToOriginal = <String, String>{};
@@ -425,6 +476,7 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
 
       final exMap = <String, List<EnglishExample>>{};
       var exStates = <String, Map<String, dynamic>>{};
+      var exComp = <String, Map<String, dynamic>>{};
       try {
         final rows = await client
             .from('english_examples')
@@ -468,6 +520,11 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
               learnerId: learnerId,
               exampleIds: exampleIds,
             );
+            exComp = await EnglishExampleCompositionStateRemote.fetchStates(
+              client: client,
+              learnerId: learnerId,
+              exampleIds: exampleIds,
+            );
           }
         }
       } catch (_) {}
@@ -489,6 +546,9 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
         _learnerExampleStates
           ..clear()
           ..addAll(exStates);
+        _learnerExampleCompositionStates
+          ..clear()
+          ..addAll(exComp);
       });
     } catch (_) {
       if (!mounted) return;
@@ -498,6 +558,7 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
         _learnerQuestionStates.clear();
         _learnerExamplesByKnowledge.clear();
         _learnerExampleStates.clear();
+        _learnerExampleCompositionStates.clear();
       });
     }
   }
@@ -827,6 +888,7 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
       examples: examples,
       questionStates: _learnerQuestionStates,
       exampleStates: _learnerExampleStates,
+      exampleCompositionStates: _learnerExampleCompositionStates,
       size: 26,
     );
   }

@@ -16,6 +16,7 @@ class _FourChoiceListScreenState extends State<FourChoiceListScreen> {
   List<Map<String, dynamic>> _items = [];
   bool _loading = true;
   String? _error;
+  bool _isLoadInFlight = false;
 
   @override
   void initState() {
@@ -24,13 +25,14 @@ class _FourChoiceListScreenState extends State<FourChoiceListScreen> {
   }
 
   Future<void> _load() async {
+    if (_isLoadInFlight) return;
+    _isLoadInFlight = true;
     setState(() {
-      _loading = true;
+      _loading = _items.isEmpty;
       _error = null;
     });
     try {
-      await ensureSyncedForLocalRead();
-      if (!mounted) return;
+      await triggerBackgroundSyncWithThrottle();
       final client = Supabase.instance.client;
       final rows = await client
           .from('questions')
@@ -40,11 +42,13 @@ class _FourChoiceListScreenState extends State<FourChoiceListScreen> {
 
       setState(() {
         _items = List<Map<String, dynamic>>.from(rows);
+        _loading = false;
       });
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
       setState(() => _loading = false);
+      _isLoadInFlight = false;
     }
   }
 

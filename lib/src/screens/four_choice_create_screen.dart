@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -60,7 +60,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
   Future<void> _loadSubjects() async {
     setState(() => _loadingSubjects = true);
     try {
-      await ensureSyncedForLocalRead();
+      await triggerBackgroundSyncWithThrottle();
       if (!mounted) return;
       final client = Supabase.instance.client;
       final rows = await client.from('subjects').select().order('display_order');
@@ -84,7 +84,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
     if (id == null) return;
     setState(() => _loadingQuestion = true);
     try {
-      await ensureSyncedForLocalRead();
+      await triggerBackgroundSyncWithThrottle();
       if (!mounted) return;
       final client = Supabase.instance.client;
       dynamic q;
@@ -204,7 +204,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
     }
     setState(() => _loadingKnowledge = true);
     try {
-      await ensureSyncedForLocalRead();
+      await triggerBackgroundSyncWithThrottle();
       if (!mounted) return;
       final client = Supabase.instance.client;
       final rows = await client

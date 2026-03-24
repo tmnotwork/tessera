@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+﻿import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -6,6 +6,7 @@ import '../app_route_observer.dart';
 import '../models/english_example.dart';
 import '../supabase/english_example_learning_state_remote.dart';
 import '../sync/ensure_synced_for_local_read.dart';
+import '../utils/english_example_knowledge_order.dart';
 import '../utils/english_example_review_filter.dart';
 import 'english_example_solve_screen.dart';
 
@@ -23,12 +24,10 @@ class _ExampleTileItem {
   const _ExampleTileItem({
     required this.rawRow,
     required this.status,
-    required this.sortOrder,
   });
 
   final Map<String, dynamic> rawRow;
   final _TileStatus status;
-  final int sortOrder;
 }
 
 class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScreen>
@@ -89,7 +88,7 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
       _error = null;
     });
     try {
-      await ensureSyncedForLocalRead();
+      await triggerBackgroundSyncWithThrottle();
       if (!mounted) return;
 
       List<Map<String, dynamic>> examples = [];
@@ -98,11 +97,12 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
             .from('english_examples')
             .select(
               'id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, created_at, '
-              'knowledge:knowledge_id(id, content, unit)',
+              'knowledge:knowledge_id(id, content, unit, display_order, created_at)',
             )
             .order('display_order', ascending: true)
             .order('created_at', ascending: true);
         examples = List<Map<String, dynamic>>.from(rows);
+        sortEnglishExampleRowsLikeKnowledgeList(examples);
       } on PostgrestException catch (e) {
         final missingTable =
             e.code == 'PGRST205' && e.message.contains('public.english_examples');
@@ -148,28 +148,27 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
         }
         final state = states[id];
         final status = _tileStatusFromState(state);
-        final sortOrder = (row['display_order'] as num?)?.toInt() ?? (1 << 30);
         grouped.putIfAbsent(chapter, () => []).add(
               _ExampleTileItem(
                 rawRow: Map<String, dynamic>.from(row),
                 status: status,
-                sortOrder: sortOrder,
               ),
             );
       }
 
       for (final list in grouped.values) {
-        list.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+        list.sort(
+          (a, b) => compareEnglishExampleRowsByKnowledgeOrder(
+            a.rawRow,
+            b.rawRow,
+          ),
+        );
       }
 
       int chapterOrder(String chapter) {
         final list = grouped[chapter];
         if (list == null || list.isEmpty) return 1 << 30;
-        var m = 1 << 30;
-        for (final item in list) {
-          if (item.sortOrder < m) m = item.sortOrder;
-        }
-        return m;
+        return minKnowledgeDisplayOrderInChapter(list.map((i) => i.rawRow));
       }
 
       final sortedGrouped = <String, List<_ExampleTileItem>>{};
@@ -282,7 +281,7 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
       MaterialPageRoute<void>(
         builder: (context) => EnglishExampleSolveScreen(
           examples: [ex],
-          subjectName: '英語例文',
+          subjectName: '例文読み上げ',
           initialStates: initial,
         ),
       ),
@@ -292,7 +291,7 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
 
   @override
   Widget build(BuildContext context) {
-    const title = '英語例文の学習状況';
+    const title = '例文読み上げの学習状況';
 
     if (_loading) {
       return Scaffold(
@@ -326,7 +325,7 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
     if (_groupedTiles.isEmpty) {
       return Scaffold(
         appBar: AppBar(title: const Text(title)),
-        body: const Center(child: Text('英語例文がありません')),
+        body: const Center(child: Text('例文がありません')),
       );
     }
 
