@@ -15,6 +15,13 @@ class TtsService {
   static final FlutterTts _flutterTts = FlutterTts();
   static bool _initialized = false;
 
+  /// 勉強時間計測用（任意）。再生開始/終了時に通知する。
+  static void Function(bool isPlaying)? _studyTimerTtsPlayingCallback;
+
+  static void setStudyTimerTtsPlayingCallback(void Function(bool isPlaying)? cb) {
+    _studyTimerTtsPlayingCallback = cb;
+  }
+
   /// 日本語用の速度（yomiage 既定 0.9）
   static double _speechRateJa = 0.9;
 
@@ -139,6 +146,7 @@ class TtsService {
       await _flutterTts.setSpeechRate(_speechRateJa);
     }
 
+    _studyTimerTtsPlayingCallback?.call(true);
     try {
       await _flutterTts.speak(text);
     } catch (e, st) {
@@ -146,10 +154,13 @@ class TtsService {
         debugPrint('TtsService.speak failed: $e');
         debugPrint('$st');
       }
+    } finally {
+      _studyTimerTtsPlayingCallback?.call(false);
     }
   }
 
   static Future<void> stop() async {
     await _flutterTts.stop();
+    _studyTimerTtsPlayingCallback?.call(false);
   }
 }

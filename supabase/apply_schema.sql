@@ -286,4 +286,81 @@ CREATE TRIGGER trg_question_choices_updated_at
   BEFORE UPDATE ON public.question_choices
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
+-- 9) 勉強時間セッション（マイグレーション 00023 と同等）
+CREATE TABLE IF NOT EXISTS public.study_sessions (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  learner_id    UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  session_type  TEXT NOT NULL,
+  content_id    TEXT,
+  content_title TEXT,
+  unit          TEXT,
+  subject_id    TEXT,
+  subject_name  TEXT,
+  tts_sec       INT NOT NULL DEFAULT 0,
+  started_at    TIMESTAMPTZ NOT NULL,
+  ended_at      TIMESTAMPTZ NOT NULL,
+  duration_sec  INT NOT NULL DEFAULT 0,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_study_sessions_learner_started
+  ON public.study_sessions(learner_id, started_at DESC);
+ALTER TABLE public.study_sessions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "study_sessions: learner own read" ON public.study_sessions;
+CREATE POLICY "study_sessions: learner own read"
+  ON public.study_sessions FOR SELECT TO authenticated
+  USING (auth.uid() = learner_id);
+DROP POLICY IF EXISTS "study_sessions: learner own insert" ON public.study_sessions;
+CREATE POLICY "study_sessions: learner own insert"
+  ON public.study_sessions FOR INSERT TO authenticated
+  WITH CHECK (auth.uid() = learner_id);
+DROP POLICY IF EXISTS "study_sessions: learner own update" ON public.study_sessions;
+CREATE POLICY "study_sessions: learner own update"
+  ON public.study_sessions FOR UPDATE TO authenticated
+  USING (auth.uid() = learner_id)
+  WITH CHECK (auth.uid() = learner_id);
+DROP POLICY IF EXISTS "study_sessions: teacher read" ON public.study_sessions;
+CREATE POLICY "study_sessions: teacher read"
+  ON public.study_sessions FOR SELECT TO authenticated
+  USING (public.get_my_role() = 'teacher');
+
+-- 10) 英作文用の例文学習記録（マイグレーション 00024 と同等）
+CREATE TABLE IF NOT EXISTS public.english_example_composition_states (
+  id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  learner_id             UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  example_id             UUID NOT NULL REFERENCES public.english_examples(id) ON DELETE CASCADE,
+  last_answer_correct    BOOLEAN,
+  last_self_remembered   BOOLEAN,
+  attempts               INT NOT NULL DEFAULT 0,
+  correct_count          INT NOT NULL DEFAULT 0,
+  remembered_count       INT NOT NULL DEFAULT 0,
+  forgot_count           INT NOT NULL DEFAULT 0,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (learner_id, example_id)
+);
+CREATE INDEX IF NOT EXISTS ix_eecs_learner_example
+  ON public.english_example_composition_states(learner_id, example_id);
+ALTER TABLE public.english_example_composition_states ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "eecs: learner own select" ON public.english_example_composition_states;
+CREATE POLICY "eecs: learner own select"
+  ON public.english_example_composition_states FOR SELECT TO authenticated
+  USING (auth.uid() = learner_id);
+DROP POLICY IF EXISTS "eecs: learner own insert" ON public.english_example_composition_states;
+CREATE POLICY "eecs: learner own insert"
+  ON public.english_example_composition_states FOR INSERT TO authenticated
+  WITH CHECK (auth.uid() = learner_id);
+DROP POLICY IF EXISTS "eecs: learner own update" ON public.english_example_composition_states;
+CREATE POLICY "eecs: learner own update"
+  ON public.english_example_composition_states FOR UPDATE TO authenticated
+  USING (auth.uid() = learner_id)
+  WITH CHECK (auth.uid() = learner_id);
+DROP POLICY IF EXISTS "eecs: teacher read" ON public.english_example_composition_states;
+CREATE POLICY "eecs: teacher read"
+  ON public.english_example_composition_states FOR SELECT TO authenticated
+  USING (public.get_my_role() = 'teacher');
+DROP TRIGGER IF EXISTS trg_eecs_updated_at ON public.english_example_composition_states;
+CREATE TRIGGER trg_eecs_updated_at
+  BEFORE UPDATE ON public.english_example_composition_states
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
 -- スキーマキャッシュを更新するため、Supabase は自動で行う。問題があればダッシュボードで「API を再読み込み」を実行。

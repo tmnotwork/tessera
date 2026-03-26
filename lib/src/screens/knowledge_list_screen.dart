@@ -9,8 +9,7 @@ import '../database/local_database.dart';
 import '../models/english_example.dart';
 import '../models/knowledge.dart';
 import '../repositories/knowledge_repository.dart';
-import '../supabase/english_example_composition_state_remote.dart';
-import '../supabase/english_example_learning_state_remote.dart';
+import '../sync/english_example_state_sync.dart';
 import '../sync/ensure_synced_for_local_read.dart';
 import '../sync/sync_engine.dart';
 import '../utils/knowledge_learner_mem_status.dart';
@@ -515,15 +514,18 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
             }
           }
           if (exampleIds.isNotEmpty) {
-            exStates = await EnglishExampleLearningStateRemote.fetchStates(
+            final localDb = widget.localDatabase ?? SyncEngine.maybeLocalDb;
+            exStates = await EnglishExampleStateSync.fetchLearningStatesHybrid(
               client: client,
               learnerId: learnerId,
               exampleIds: exampleIds,
+              localDb: localDb,
             );
-            exComp = await EnglishExampleCompositionStateRemote.fetchStates(
+            exComp = await EnglishExampleStateSync.fetchCompositionStatesHybrid(
               client: client,
               learnerId: learnerId,
               exampleIds: exampleIds,
+              localDb: localDb,
             );
           }
         }

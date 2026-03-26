@@ -19,8 +19,10 @@ import 'src/database/local_database.dart';
 import 'src/init_sqflite_stub.dart' if (dart.library.io) 'src/init_sqflite_io.dart' as init_sqflite;
 import 'src/repositories/subject_repository.dart';
 import 'src/sync/ensure_synced_for_local_read.dart';
+import 'src/services/study_timer_service.dart';
 import 'src/sync/sync_engine.dart';
 import 'src/widgets/force_sync_icon_button.dart';
+import 'src/widgets/study_time_user_activity_scope.dart';
 import 'src/screens/four_choice_list_screen.dart';
 import 'src/screens/knowledge_list_screen.dart';
 import 'src/screens/english_example_list_screen.dart';
@@ -83,6 +85,7 @@ Future<void> main() async {
     appAuthNotifier.init();
     init_sqflite.initSqliteForDesktop();
     final db = await _initLocalDb();
+    StudyTimerService.instance.attachDatabase(db);
     final localDatabase = LocalDatabase(db);
     SyncEngine.init(localDatabase);
     // 未ログインで sync すると RLS により Pull が空/失敗しやすい。セッション復元済みのときだけ起動時同期。
@@ -420,6 +423,11 @@ class _RootAppState extends State<RootApp> {
       darkTheme: _buildDarkTheme(),
       themeMode: _themeMode,
       navigatorObservers: [appRouteObserver],
+      builder: (context, child) {
+        final c = child ?? const SizedBox.shrink();
+        if (kIsWeb) return c;
+        return StudyTimeUserActivityScope(child: c);
+      },
       home: RootScaffold(key: _rootScaffoldKey, localDb: widget.localDb, localDatabase: widget.localDatabase),
     );
   }
@@ -439,7 +447,7 @@ class RootScaffold extends StatefulWidget {
   State<RootScaffold> createState() => _RootScaffoldState();
 }
 
-class _RootScaffoldState extends State<RootScaffold> {
+class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver {
   /// Windows デスクトップ起動時は教師用管理を最初に表示（タブ順: 0学習 / 1知識DB / 2教師用管理）
   int _index = isWindows ? 2 : 0;
   String? _role;
@@ -450,19 +458,35 @@ class _RootScaffoldState extends State<RootScaffold> {
   bool _teacherTabRoleRetried = false;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   Timer? _debounceTimer;
+  Timer? _resumeSyncTimer;
+  /// 同期が進行中で即時実行できなかったときの再試行（他端末の変更取りこぼし防止）
+  Timer? _deferredSyncTimer;
+
+  /// Pull→Push のフル同期を試みる。実行中なら遅延して再試行する。
+  void _attemptCrossDeviceSyncOrDefer() {
+    if (kIsWeb || !mounted || !SyncEngine.isInitialized || !appAuthNotifier.isLoggedIn) return;
+    if (!SyncEngine.instance.isSyncing) {
+      unawaited(SyncEngine.instance.syncIfOnline());
+      return;
+    }
+    _deferredSyncTimer?.cancel();
+    _deferredSyncTimer = Timer(const Duration(seconds: 12), () {
+      if (!mounted || !SyncEngine.isInitialized || !appAuthNotifier.isLoggedIn) return;
+      unawaited(SyncEngine.instance.syncIfOnline());
+    });
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     appAuthNotifier.listen(_onAuthChanged);
     _refreshRole();
     // onAuthStateChange は listen 登録より前に initialSession が流れると取りこぼす。
     // その場合ログイン済みでも同期が一度も走らないため、1 フレーム後にログイン時だけ明示的に同期をかける。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (!kIsWeb && SyncEngine.isInitialized && appAuthNotifier.isLoggedIn) {
-        SyncEngine.instance.syncIfOnline();
-      }
+      _attemptCrossDeviceSyncOrDefer();
     });
     if (!kIsWeb && SyncEngine.isInitialized) {
       _connectivitySubscription = Connectivity().onConnectivityChanged.listen((result) {
@@ -470,9 +494,8 @@ class _RootScaffoldState extends State<RootScaffold> {
         if (hasConnection) {
           _debounceTimer?.cancel();
           _debounceTimer = Timer(const Duration(seconds: 3), () {
-            if (SyncEngine.isInitialized && !SyncEngine.instance.isSyncing) {
-              SyncEngine.instance.syncIfOnline();
-            }
+            if (!mounted) return;
+            _attemptCrossDeviceSyncOrDefer();
           });
         }
       });
@@ -481,10 +504,24 @@ class _RootScaffoldState extends State<RootScaffold> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     appAuthNotifier.dispose();
     _connectivitySubscription?.cancel();
     _debounceTimer?.cancel();
+    _resumeSyncTimer?.cancel();
+    _deferredSyncTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    if (kIsWeb) return;
+    _resumeSyncTimer?.cancel();
+    _resumeSyncTimer = Timer(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      _attemptCrossDeviceSyncOrDefer();
+    });
   }
 
   void _onAuthChanged() {
@@ -495,9 +532,7 @@ class _RootScaffoldState extends State<RootScaffold> {
     }
     if (mounted) _refreshRole();
     // モバイル/デスクトップ: ログイン後に同期を1回走らせ、ローカルに subjects/knowledge を入れる（知識DBタブがローカル参照のため）
-    if (!kIsWeb && SyncEngine.isInitialized && appAuthNotifier.isLoggedIn) {
-      SyncEngine.instance.syncIfOnline();
-    }
+    _attemptCrossDeviceSyncOrDefer();
   }
 
   Future<void> _refreshRole() async {
@@ -539,6 +574,17 @@ class _RootScaffoldState extends State<RootScaffold> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) setState(() => _index = 2);
     });
+  }
+
+  /// 学習フローから「英語例文を編集」: タブ切替はせず、その場から編集画面を直接開く。
+  void _switchToManageTabAndOpenEnglishExamples(BuildContext context) {
+    final navigator =
+        Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
+    navigator.push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => const EnglishExampleListScreen(),
+      ),
+    );
   }
 
   Widget _buildLearnerTab() {
@@ -648,6 +694,8 @@ class _RootScaffoldState extends State<RootScaffold> {
   @override
   Widget build(BuildContext context) {
     openManageNotifier.openManage = (ctx) => _rootScaffoldKey.currentState?._switchToManageTab(ctx);
+    openManageNotifier.openManageEnglishExamples =
+        (ctx) => _rootScaffoldKey.currentState?._switchToManageTabAndOpenEnglishExamples(ctx);
 
     // 未ログイン時はログインゲートのみ。知識DBなどはログイン後のみ表示する。
     if (!_authReady) {
@@ -1781,6 +1829,7 @@ Future<Database> _initLocalDb() async {
     version: kLocalDbVersion,
     onCreate: (db, version) async {
       await createLocalSyncTables(db);
+      await createStudySessionsTable(db);
       // 後方互換: step 11 で削除予定の knowledge_local（AssetImport / LearningSyncPage 用）
       await db.execute('''
         CREATE TABLE IF NOT EXISTS knowledge_local (
@@ -1873,6 +1922,68 @@ Future<Database> _initLocalDb() async {
 
         await addTagSyncColumns('local_knowledge_tags');
         await addTagSyncColumns('local_memorization_tags');
+      }
+      if (oldVersion < 9) {
+        await createStudySessionsTable(db);
+      }
+      if (oldVersion < 10) {
+        final cols = await db.rawQuery("PRAGMA table_info('study_sessions')");
+        final hasLocalId = cols.any((c) => c['name']?.toString() == 'local_id');
+        if (!hasLocalId) {
+          await db.execute('''
+            CREATE TABLE study_sessions_new (
+              local_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+              supabase_id   TEXT UNIQUE,
+              dirty         INTEGER NOT NULL DEFAULT 1,
+              deleted       INTEGER NOT NULL DEFAULT 0,
+              synced_at     TEXT,
+              session_type  TEXT NOT NULL,
+              content_id    TEXT,
+              content_title TEXT,
+              unit          TEXT,
+              subject_id    TEXT,
+              subject_name  TEXT,
+              tts_sec       INTEGER NOT NULL DEFAULT 0,
+              started_at    TEXT NOT NULL,
+              ended_at      TEXT,
+              duration_sec  INTEGER,
+              created_at    TEXT NOT NULL
+            )
+          ''');
+          final oldExists = cols.isNotEmpty;
+          if (oldExists) {
+            await db.execute('''
+              INSERT INTO study_sessions_new (
+                session_type, content_id, content_title, unit, subject_id, subject_name,
+                tts_sec, started_at, ended_at, duration_sec, created_at, dirty, deleted
+              )
+              SELECT
+                session_type, content_id, content_title, unit, subject_id, subject_name,
+                tts_sec, started_at, ended_at, duration_sec, created_at, 1, 0
+              FROM study_sessions
+            ''');
+            await db.execute('DROP TABLE study_sessions');
+          }
+          await db.execute('ALTER TABLE study_sessions_new RENAME TO study_sessions');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS ix_study_sessions_started_at ON study_sessions(started_at)',
+          );
+        }
+      }
+      if (oldVersion < 11) {
+        final cols = await db.rawQuery("PRAGMA table_info('study_sessions')");
+        final hasUpdatedAt = cols.any((c) => c['name']?.toString() == 'updated_at');
+        if (!hasUpdatedAt && cols.isNotEmpty) {
+          await db.execute(
+            "ALTER TABLE study_sessions ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+          );
+          await db.execute(
+            "UPDATE study_sessions SET updated_at = created_at WHERE TRIM(COALESCE(updated_at, '')) = ''",
+          );
+        }
+      }
+      if (oldVersion < 12) {
+        await createEnglishExampleStateTables(db);
       }
     },
     onOpen: (db) async {

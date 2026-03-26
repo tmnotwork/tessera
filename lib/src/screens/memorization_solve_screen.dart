@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/memorization_card.dart';
+import '../services/study_timer_service.dart';
 
 /// 暗記カードを出題する画面。表表示 → 裏表示 → 正解/不正解の自己申告
 class MemorizationSolveScreen extends StatefulWidget {
@@ -25,17 +28,48 @@ class _MemorizationSolveScreenState extends State<MemorizationSolveScreen> {
   bool get _hasNext => _index + 1 < widget.cards.length;
   bool get _hasBack => _currentCard.backContent != null && _currentCard.backContent!.isNotEmpty;
 
+  Future<void> _syncMemorizationStudySession() async {
+    await StudyTimerService.instance.endSession();
+    if (!mounted || widget.cards.isEmpty) return;
+    final c = widget.cards[_index];
+    await StudyTimerService.instance.startSession(
+      sessionType: 'memorization',
+      contentId: c.id,
+      contentTitle: c.frontContent,
+      unit: c.unit,
+      subjectId: c.subjectId,
+      subjectName: widget.subjectName,
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.cards.isNotEmpty) {
+      unawaited(_syncMemorizationStudySession());
+    }
+  }
+
+  @override
+  void dispose() {
+    unawaited(StudyTimerService.instance.endSession());
+    super.dispose();
+  }
+
   void _onRevealBack() {
     setState(() => _showBack = true);
   }
 
-  void _onSelfReport(bool correct) {
+  Future<void> _onSelfReport(bool _) async {
     if (_hasNext) {
       setState(() {
         _index += 1;
         _showBack = false;
       });
+      unawaited(_syncMemorizationStudySession());
     } else {
+      await StudyTimerService.instance.endSession();
+      if (!mounted) return;
       Navigator.of(context).pop();
     }
   }

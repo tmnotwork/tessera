@@ -140,4 +140,81 @@ class EnglishExampleLearningStateRemote {
       return null;
     }
   }
+
+  /// [SyncEngine] 用: ローカルで確定した SM-2 値をそのまま反映（`reviewed_count` の加算なし）。
+  static Future<String?> pushExactForSync({
+    required SupabaseClient client,
+    required String learnerId,
+    required String exampleId,
+    String? knownRemoteRowId,
+    required int repetitions,
+    required double eFactor,
+    required int intervalDays,
+    required String nextReviewAtIso,
+    required int? lastQuality,
+    required int reviewedCount,
+  }) async {
+    final updatePayload = <String, dynamic>{
+      'repetitions': repetitions,
+      'e_factor': eFactor,
+      'interval_days': intervalDays,
+      'next_review_at': nextReviewAtIso,
+      'last_quality': lastQuality,
+      'reviewed_count': reviewedCount,
+    };
+    try {
+      if (knownRemoteRowId != null && knownRemoteRowId.isNotEmpty) {
+        await client.from(_table).update(updatePayload).eq('id', knownRemoteRowId);
+        return knownRemoteRowId;
+      }
+
+      final existing = await client
+          .from(_table)
+          .select('id')
+          .eq('learner_id', learnerId)
+          .eq('example_id', exampleId)
+          .maybeSingle();
+      if (existing != null) {
+        final id = existing['id']?.toString();
+        if (id != null && id.isNotEmpty) {
+          await client.from(_table).update(updatePayload).eq('id', id);
+          return id;
+        }
+      }
+
+      final insertPayload = <String, dynamic>{
+        'learner_id': learnerId,
+        'example_id': exampleId,
+        ...updatePayload,
+      };
+
+      try {
+        final inserted = await client.from(_table).insert(insertPayload).select('id').single();
+        return inserted['id']?.toString();
+      } on PostgrestException catch (e) {
+        final isDup = e.code == '23505' ||
+            e.message.toLowerCase().contains('duplicate key') ||
+            e.message.toLowerCase().contains('unique constraint');
+        if (isDup) {
+          final again = await client
+              .from(_table)
+              .select('id')
+              .eq('learner_id', learnerId)
+              .eq('example_id', exampleId)
+              .maybeSingle();
+          final id = again?['id']?.toString();
+          if (id != null && id.isNotEmpty) {
+            await client.from(_table).update(updatePayload).eq('id', id);
+            return id;
+          }
+        }
+        rethrow;
+      }
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('EnglishExampleLearningStateRemote.pushExactForSync failed: $e\n$st');
+      }
+      return null;
+    }
+  }
 }

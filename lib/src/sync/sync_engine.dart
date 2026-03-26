@@ -3,6 +3,8 @@ import 'package:postgrest/postgrest.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../database/local_database.dart';
+import '../supabase/english_example_composition_state_remote.dart';
+import '../supabase/english_example_learning_state_remote.dart';
 import '../supabase/question_learning_state_remote.dart';
 import 'sync_metadata_store.dart';
 import 'sync_notifier.dart';
@@ -13,6 +15,15 @@ class SyncEngine {
   SyncEngine._({required LocalDatabase localDb}) : _localDb = localDb;
 
   final LocalDatabase _localDb;
+
+  /// 画面・リポジトリからローカル DB にアクセスする（初期化済みインスタンス経由）。
+  LocalDatabase get localDb => _localDb;
+
+  /// Web または未初期化時は null。
+  static LocalDatabase? get maybeLocalDb {
+    if (kIsWeb || !isInitialized) return null;
+    return instance.localDb;
+  }
 
   static SyncEngine? _instance;
 
@@ -50,6 +61,56 @@ class SyncEngine {
     } catch (e, st) {
       if (kDebugMode) {
         debugPrint('SyncEngine.syncIfOnline: 予期しない例外 $e\n$st');
+      }
+    }
+  }
+
+  /// 勉強時間セッション（`study_sessions`）の dirty 行だけを Supabase に送る。Pull は行わない。
+  ///
+  /// [StudyTimerService] がセッション終了時に呼び、通常同期を待たずにアップロードする。
+  /// 全体の [sync] と並行してもよい（行単位で markSynced される）。
+  Future<void> pushDirtyStudySessionsIfOnline() async {
+    if (kIsWeb) return;
+    final client = Supabase.instance.client;
+    if (client.auth.currentSession == null) return;
+    try {
+      await _pushTableSafe(client, LocalTable.studySessions, 'study_sessions', _pushStudySessionRow);
+    } on PostgrestException catch (e) {
+      if (kDebugMode) {
+        debugPrint('SyncEngine.pushDirtyStudySessionsIfOnline: $e');
+      }
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('SyncEngine.pushDirtyStudySessionsIfOnline: $e\n$st');
+      }
+    }
+  }
+
+  /// 英語例文 SM-2 / 英作文状態の dirty 行だけ Supabase へ（Pull は行わない）。
+  Future<void> pushDirtyEnglishExampleStatesIfOnline() async {
+    if (kIsWeb) return;
+    final client = Supabase.instance.client;
+    if (client.auth.currentSession == null) return;
+    try {
+      await _pushTableSafe(
+        client,
+        LocalTable.englishExampleLearningStates,
+        'english_example_learning_states',
+        _pushEnglishExampleLearningStateRow,
+      );
+      await _pushTableSafe(
+        client,
+        LocalTable.englishExampleCompositionStates,
+        'english_example_composition_states',
+        _pushEnglishExampleCompositionStateRow,
+      );
+    } on PostgrestException catch (e) {
+      if (kDebugMode) {
+        debugPrint('SyncEngine.pushDirtyEnglishExampleStatesIfOnline: $e');
+      }
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('SyncEngine.pushDirtyEnglishExampleStatesIfOnline: $e\n$st');
       }
     }
   }
@@ -287,6 +348,9 @@ class SyncEngine {
     await _pullTableFullSafe(client, 'memorization_tags', LocalTable.memorizationTags, _memorizationTagCols);
     await _pullTableFullSafe(client, 'question_answer_logs', LocalTable.questionAnswerLogs, _questionAnswerLogCols);
     await _pullTableFullSafe(client, 'question_learning_states', LocalTable.questionLearningStates, _questionLearningStateCols);
+    await _pullEnglishExampleLearningStatesFullSafe(client);
+    await _pullEnglishExampleCompositionStatesFullSafe(client);
+    await _pullStudySessionsFullSafe(client);
     await _pullJunctionFullSafe(client);
   }
 
@@ -313,6 +377,9 @@ class SyncEngine {
     await _pullTableIncrementalSafe(client, 'memorization_tags', LocalTable.memorizationTags, _memorizationTagCols, lastPullAt);
     await _pullTableIncrementalSafe(client, 'question_answer_logs', LocalTable.questionAnswerLogs, _questionAnswerLogCols, lastPullAt);
     await _pullTableIncrementalSafe(client, 'question_learning_states', LocalTable.questionLearningStates, _questionLearningStateCols, lastPullAt);
+    await _pullEnglishExampleLearningStatesIncrementalSafe(client, lastPullAt);
+    await _pullEnglishExampleCompositionStatesIncrementalSafe(client, lastPullAt);
+    await _pullStudySessionsIncrementalSafe(client, lastPullAt);
     await _pullJunctionIncremental(client, lastPullAt);
   }
 
@@ -359,7 +426,50 @@ class SyncEngine {
     'deleted_at',
   ];
   static const _questionAnswerLogCols = ['id', 'learner_id', 'question_id', 'selected_choice_text', 'selected_index', 'is_correct', 'answered_at', 'created_at', 'updated_at'];
+
+  /// 他端末で記録されたセッションを取り込む（RLS + ここで learner_id を絞る）
+  static const _studySessionCols = [
+    'id',
+    'learner_id',
+    'session_type',
+    'content_id',
+    'content_title',
+    'unit',
+    'subject_id',
+    'subject_name',
+    'tts_sec',
+    'started_at',
+    'ended_at',
+    'duration_sec',
+    'created_at',
+  ];
   static const _questionLearningStateCols = ['id', 'learner_id', 'question_id', 'stability', 'difficulty', 'retrievability', 'success_streak', 'lapse_count', 'reviewed_count', 'last_is_correct', 'last_selected_choice_text', 'last_selected_index', 'last_review_at', 'next_review_at', 'created_at', 'updated_at'];
+  static const _englishExampleLearningStateCols = [
+    'id',
+    'learner_id',
+    'example_id',
+    'repetitions',
+    'e_factor',
+    'interval_days',
+    'next_review_at',
+    'last_quality',
+    'reviewed_count',
+    'created_at',
+    'updated_at',
+  ];
+  static const _englishExampleCompositionStateCols = [
+    'id',
+    'learner_id',
+    'example_id',
+    'last_answer_correct',
+    'last_self_remembered',
+    'attempts',
+    'correct_count',
+    'remembered_count',
+    'forgot_count',
+    'created_at',
+    'updated_at',
+  ];
   /// deleted_at 未追加のリモート用（マイグレーション 00014_add_deleted_at_for_sync 未適用時）
   static const _subjectColsLegacy = ['id', 'name', 'display_order', 'created_at', 'updated_at'];
   /// deleted_at 無しリモート用。dev_completed 等を含めないと Pull マージで常に false/0 に上書きされる。
@@ -449,6 +559,250 @@ class SyncEngine {
     }
   }
 
+  Future<void> _pullStudySessionsFullSafe(SupabaseClient client) async {
+    try {
+      await _pullStudySessionsFull(client);
+    } on PostgrestException catch (e) {
+      if (e.code == 'PGRST205') {
+        if (kDebugMode) debugPrint('SyncEngine: skip study_sessions (table not in remote)');
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _pullStudySessionsIncrementalSafe(SupabaseClient client, String lastPullAt) async {
+    try {
+      await _pullStudySessionsIncremental(client, lastPullAt);
+    } on PostgrestException catch (e) {
+      if (e.code == 'PGRST205') {
+        if (kDebugMode) debugPrint('SyncEngine: skip study_sessions (table not in remote)');
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  /// ログイン中ユーザーのみ（教師が全件 Pull してローカルが汚染されないよう `.eq(learner_id)` を付与）
+  Future<void> _pullStudySessionsFull(SupabaseClient client) async {
+    final uid = client.auth.currentUser?.id;
+    if (uid == null) return;
+    var offset = 0;
+    while (true) {
+      final rows = await client
+          .from('study_sessions')
+          .select(_studySessionCols.join(','))
+          .eq('learner_id', uid)
+          .order('created_at', ascending: true)
+          .order('id', ascending: true)
+          .range(offset, offset + _pageSize - 1);
+      final list = rows as List;
+      if (list.isEmpty) break;
+      for (final row in list) {
+        await _mergeRow(
+          client,
+          LocalTable.studySessions,
+          row as Map<String, dynamic>,
+          'study_sessions',
+          fullPull: true,
+        );
+      }
+      offset += _pageSize;
+      if (list.length < _pageSize) break;
+    }
+  }
+
+  Future<void> _pullStudySessionsIncremental(SupabaseClient client, String lastPullAt) async {
+    final uid = client.auth.currentUser?.id;
+    if (uid == null) return;
+    var offset = 0;
+    while (true) {
+      final rows = await client
+          .from('study_sessions')
+          .select(_studySessionCols.join(','))
+          .eq('learner_id', uid)
+          .gte('created_at', lastPullAt)
+          .order('created_at', ascending: true)
+          .order('id', ascending: true)
+          .range(offset, offset + _pageSize - 1);
+      final list = rows as List;
+      if (list.isEmpty) break;
+      for (final row in list) {
+        await _mergeRow(
+          client,
+          LocalTable.studySessions,
+          row as Map<String, dynamic>,
+          'study_sessions',
+          fullPull: false,
+        );
+      }
+      offset += _pageSize;
+      if (list.length < _pageSize) break;
+    }
+  }
+
+  Future<void> _pullEnglishExampleLearningStatesFullSafe(SupabaseClient client) async {
+    try {
+      await _pullEnglishExampleLearningStatesFull(client);
+    } on PostgrestException catch (e) {
+      if (e.code == 'PGRST205') {
+        if (kDebugMode) debugPrint('SyncEngine: skip english_example_learning_states (table not in remote)');
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _pullEnglishExampleLearningStatesIncrementalSafe(SupabaseClient client, String lastPullAt) async {
+    try {
+      await _pullEnglishExampleLearningStatesIncremental(client, lastPullAt);
+    } on PostgrestException catch (e) {
+      if (e.code == 'PGRST205') {
+        if (kDebugMode) debugPrint('SyncEngine: skip english_example_learning_states (table not in remote)');
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _pullEnglishExampleLearningStatesFull(SupabaseClient client) async {
+    final uid = client.auth.currentUser?.id;
+    if (uid == null) return;
+    var offset = 0;
+    while (true) {
+      final rows = await client
+          .from('english_example_learning_states')
+          .select(_englishExampleLearningStateCols.join(','))
+          .eq('learner_id', uid)
+          .order('updated_at', ascending: true)
+          .order('id', ascending: true)
+          .range(offset, offset + _pageSize - 1);
+      final list = rows as List;
+      if (list.isEmpty) break;
+      for (final row in list) {
+        await _mergeRow(
+          client,
+          LocalTable.englishExampleLearningStates,
+          row as Map<String, dynamic>,
+          'english_example_learning_states',
+          fullPull: true,
+        );
+      }
+      offset += _pageSize;
+      if (list.length < _pageSize) break;
+    }
+  }
+
+  Future<void> _pullEnglishExampleLearningStatesIncremental(SupabaseClient client, String lastPullAt) async {
+    final uid = client.auth.currentUser?.id;
+    if (uid == null) return;
+    var offset = 0;
+    while (true) {
+      final rows = await client
+          .from('english_example_learning_states')
+          .select(_englishExampleLearningStateCols.join(','))
+          .eq('learner_id', uid)
+          .gte('updated_at', lastPullAt)
+          .order('updated_at', ascending: true)
+          .order('id', ascending: true)
+          .range(offset, offset + _pageSize - 1);
+      final list = rows as List;
+      if (list.isEmpty) break;
+      for (final row in list) {
+        await _mergeRow(
+          client,
+          LocalTable.englishExampleLearningStates,
+          row as Map<String, dynamic>,
+          'english_example_learning_states',
+          fullPull: false,
+        );
+      }
+      offset += _pageSize;
+      if (list.length < _pageSize) break;
+    }
+  }
+
+  Future<void> _pullEnglishExampleCompositionStatesFullSafe(SupabaseClient client) async {
+    try {
+      await _pullEnglishExampleCompositionStatesFull(client);
+    } on PostgrestException catch (e) {
+      if (e.code == 'PGRST205') {
+        if (kDebugMode) debugPrint('SyncEngine: skip english_example_composition_states (table not in remote)');
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _pullEnglishExampleCompositionStatesIncrementalSafe(SupabaseClient client, String lastPullAt) async {
+    try {
+      await _pullEnglishExampleCompositionStatesIncremental(client, lastPullAt);
+    } on PostgrestException catch (e) {
+      if (e.code == 'PGRST205') {
+        if (kDebugMode) debugPrint('SyncEngine: skip english_example_composition_states (table not in remote)');
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _pullEnglishExampleCompositionStatesFull(SupabaseClient client) async {
+    final uid = client.auth.currentUser?.id;
+    if (uid == null) return;
+    var offset = 0;
+    while (true) {
+      final rows = await client
+          .from('english_example_composition_states')
+          .select(_englishExampleCompositionStateCols.join(','))
+          .eq('learner_id', uid)
+          .order('updated_at', ascending: true)
+          .order('id', ascending: true)
+          .range(offset, offset + _pageSize - 1);
+      final list = rows as List;
+      if (list.isEmpty) break;
+      for (final row in list) {
+        await _mergeRow(
+          client,
+          LocalTable.englishExampleCompositionStates,
+          row as Map<String, dynamic>,
+          'english_example_composition_states',
+          fullPull: true,
+        );
+      }
+      offset += _pageSize;
+      if (list.length < _pageSize) break;
+    }
+  }
+
+  Future<void> _pullEnglishExampleCompositionStatesIncremental(SupabaseClient client, String lastPullAt) async {
+    final uid = client.auth.currentUser?.id;
+    if (uid == null) return;
+    var offset = 0;
+    while (true) {
+      final rows = await client
+          .from('english_example_composition_states')
+          .select(_englishExampleCompositionStateCols.join(','))
+          .eq('learner_id', uid)
+          .gte('updated_at', lastPullAt)
+          .order('updated_at', ascending: true)
+          .order('id', ascending: true)
+          .range(offset, offset + _pageSize - 1);
+      final list = rows as List;
+      if (list.isEmpty) break;
+      for (final row in list) {
+        await _mergeRow(
+          client,
+          LocalTable.englishExampleCompositionStates,
+          row as Map<String, dynamic>,
+          'english_example_composition_states',
+          fullPull: false,
+        );
+      }
+      offset += _pageSize;
+      if (list.length < _pageSize) break;
+    }
+  }
+
   /// 増分 Pull などで `local_questions` にまだ無いとき、リモートから1件取り込む（学習状態・選択肢の FK 用）。
   Future<Map<String, dynamic>?> _ensureQuestionInLocalDb(SupabaseClient client, String questionSupabaseId) async {
     if (questionSupabaseId.isEmpty) return null;
@@ -496,6 +850,36 @@ class SyncEngine {
     return rows.isEmpty ? null : rows.first;
   }
 
+  Future<Map<String, dynamic>?> _localEnglishExampleLearningStateByLearnerAndExample(
+    Map<String, dynamic> remote,
+  ) async {
+    final learnerId = _str(remote['learner_id']);
+    final exampleId = _str(remote['example_id']);
+    if (learnerId.isEmpty || exampleId.isEmpty) return null;
+    final rows = await _localDb.db.query(
+      LocalTable.englishExampleLearningStates,
+      where: 'learner_id = ? AND example_supabase_id = ?',
+      whereArgs: [learnerId, exampleId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<Map<String, dynamic>?> _localEnglishExampleCompositionStateByLearnerAndExample(
+    Map<String, dynamic> remote,
+  ) async {
+    final learnerId = _str(remote['learner_id']);
+    final exampleId = _str(remote['example_id']);
+    if (learnerId.isEmpty || exampleId.isEmpty) return null;
+    final rows = await _localDb.db.query(
+      LocalTable.englishExampleCompositionStates,
+      where: 'learner_id = ? AND example_supabase_id = ?',
+      whereArgs: [learnerId, exampleId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
   Future<void> _mergeRow(SupabaseClient client, String localTable, Map<String, dynamic> remote, String remoteTable, {required bool fullPull}) async {
     final supabaseId = _str(remote['id']);
     if (supabaseId.isEmpty) return;
@@ -506,13 +890,22 @@ class SyncEngine {
     if (existing == null && localTable == LocalTable.questionLearningStates && remoteTable == 'question_learning_states') {
       existing = await _localQuestionLearningStateByLearnerAndQuestion(remote);
     }
+    if (existing == null && localTable == LocalTable.englishExampleLearningStates && remoteTable == 'english_example_learning_states') {
+      existing = await _localEnglishExampleLearningStateByLearnerAndExample(remote);
+    }
+    if (existing == null && localTable == LocalTable.englishExampleCompositionStates && remoteTable == 'english_example_composition_states') {
+      existing = await _localEnglishExampleCompositionStateByLearnerAndExample(remote);
+    }
     if (existing == null) {
       await _insertRemoteRow(client, localTable, remote, remoteTable, isDeleted);
       return;
     }
     if (existing['dirty'] == 1) {
       final localUpdated = _parseUtc(existing['updated_at']?.toString());
-      final remoteUpdated = _parseUtc(remote['updated_at']?.toString());
+      var remoteUpdated = _parseUtc(remote['updated_at']?.toString());
+      if (remoteUpdated == null && localTable == LocalTable.studySessions) {
+        remoteUpdated = _parseUtc(remote['created_at']?.toString());
+      }
       if (remoteUpdated != null && localUpdated != null) {
         if (remoteUpdated.isAfter(localUpdated)) {
           await _updateLocalFromRemote(localTable, remote, remoteTable, existing['local_id'] as int, isDeleted);
@@ -711,8 +1104,43 @@ class SyncEngine {
       map['last_selected_index'] = remote['last_selected_index'];
       map['last_review_at'] = remote['last_review_at']?.toString();
       map['next_review_at'] = remote['next_review_at']?.toString() ?? LocalDatabase.nowUtc();
+    } else if (remoteTable == 'english_example_learning_states') {
+      map['learner_id'] = remote['learner_id'] ?? '';
+      map['example_supabase_id'] = _str(remote['example_id']);
+      map['repetitions'] = remote['repetitions'] ?? 0;
+      map['e_factor'] = (remote['e_factor'] as num?)?.toDouble() ?? 2.5;
+      map['interval_days'] = remote['interval_days'] ?? 0;
+      map['next_review_at'] = remote['next_review_at']?.toString() ?? LocalDatabase.nowUtc();
+      map['last_quality'] = remote['last_quality'];
+      map['reviewed_count'] = remote['reviewed_count'] ?? 0;
+    } else if (remoteTable == 'english_example_composition_states') {
+      map['learner_id'] = remote['learner_id'] ?? '';
+      map['example_supabase_id'] = _str(remote['example_id']);
+      map['last_answer_correct'] =
+          remote['last_answer_correct'] == null ? null : ((remote['last_answer_correct'] == true) ? 1 : 0);
+      map['last_self_remembered'] =
+          remote['last_self_remembered'] == null ? null : ((remote['last_self_remembered'] == true) ? 1 : 0);
+      map['attempts'] = remote['attempts'] ?? 0;
+      map['correct_count'] = remote['correct_count'] ?? 0;
+      map['remembered_count'] = remote['remembered_count'] ?? 0;
+      map['forgot_count'] = remote['forgot_count'] ?? 0;
     } else if (remoteTable == 'knowledge_tags' || remoteTable == 'memorization_tags') {
       map['name'] = remote['name'] ?? '';
+    } else if (remoteTable == 'study_sessions') {
+      map['session_type'] = remote['session_type']?.toString() ?? '';
+      map['content_id'] = remote['content_id']?.toString();
+      map['content_title'] = remote['content_title']?.toString();
+      map['unit'] = remote['unit']?.toString();
+      map['subject_id'] = remote['subject_id']?.toString();
+      map['subject_name'] = remote['subject_name']?.toString();
+      map['tts_sec'] = remote['tts_sec'] is int
+          ? remote['tts_sec'] as int
+          : int.tryParse(remote['tts_sec']?.toString() ?? '') ?? 0;
+      map['duration_sec'] = remote['duration_sec'] is int
+          ? remote['duration_sec'] as int
+          : int.tryParse(remote['duration_sec']?.toString() ?? '') ?? 0;
+      map['started_at'] = remote['started_at']?.toString() ?? '';
+      map['ended_at'] = remote['ended_at']?.toString() ?? '';
     }
     return map;
   }
@@ -903,6 +1331,7 @@ class SyncEngine {
     await _pushTableSafe(client, LocalTable.questionChoices, 'question_choices', _pushQuestionChoiceRow);
     await _pushTableSafe(client, LocalTable.questionAnswerLogs, 'question_answer_logs', _pushQuestionAnswerLogRow);
     await _pushTableSafe(client, LocalTable.questionLearningStates, 'question_learning_states', _pushQuestionLearningStateRow);
+    await _pushTableSafe(client, LocalTable.studySessions, 'study_sessions', _pushStudySessionRow);
     await _pushTagsAndJunctions(client);
   }
 
@@ -1103,6 +1532,49 @@ class SyncEngine {
     }
   }
 
+  Future<void> _pushStudySessionRow(SupabaseClient client, Map<String, dynamic> row) async {
+    final user = client.auth.currentUser;
+    if (user == null) return;
+
+    final startedAt = row['started_at']?.toString() ?? '';
+    var endedAt = row['ended_at']?.toString();
+    if (endedAt == null || endedAt.trim().isEmpty) {
+      endedAt = startedAt;
+    }
+    final durationSec = (row['duration_sec'] is int)
+        ? row['duration_sec'] as int
+        : int.tryParse(row['duration_sec']?.toString() ?? '') ?? 0;
+    final ttsSec = (row['tts_sec'] is int)
+        ? row['tts_sec'] as int
+        : int.tryParse(row['tts_sec']?.toString() ?? '') ?? 0;
+
+    final supabaseId = row['supabase_id'] as String?;
+    final payload = <String, dynamic>{
+      'learner_id': user.id,
+      'session_type': row['session_type']?.toString() ?? '',
+      'content_id': row['content_id']?.toString(),
+      'content_title': row['content_title']?.toString(),
+      'unit': row['unit']?.toString(),
+      'subject_id': row['subject_id']?.toString(),
+      'subject_name': row['subject_name']?.toString(),
+      'tts_sec': ttsSec,
+      'started_at': startedAt,
+      'ended_at': endedAt,
+      'duration_sec': durationSec < 0 ? 0 : durationSec,
+    };
+
+    if (supabaseId == null || supabaseId.isEmpty) {
+      final inserted = await client.from('study_sessions').insert(payload).select('id').single();
+      final id = (inserted as Map)['id']?.toString();
+      if (id != null) {
+        await _localDb.markSynced(LocalTable.studySessions, row['local_id'] as int, supabaseId: id);
+      }
+    } else {
+      await client.from('study_sessions').upsert({...payload, 'id': supabaseId}, onConflict: 'id');
+      await _localDb.markSynced(LocalTable.studySessions, row['local_id'] as int, supabaseId: supabaseId);
+    }
+  }
+
   Future<void> _pushQuestionLearningStateRow(SupabaseClient client, Map<String, dynamic> row) async {
     final questionLocalId = row['question_local_id'];
     final fromRow = _str(row['question_supabase_id'] as String?);
@@ -1147,6 +1619,75 @@ class SyncEngine {
     );
     if (remoteId != null) {
       await _localDb.markSynced(LocalTable.questionLearningStates, row['local_id'] as int, supabaseId: remoteId);
+    }
+  }
+
+  Future<void> _pushEnglishExampleLearningStateRow(SupabaseClient client, Map<String, dynamic> row) async {
+    final learnerId = row['learner_id']?.toString() ?? '';
+    final exampleId = row['example_supabase_id']?.toString() ?? '';
+    if (learnerId.isEmpty || exampleId.isEmpty) return;
+
+    final supabaseId = row['supabase_id'] as String?;
+    final remoteId = await EnglishExampleLearningStateRemote.pushExactForSync(
+      client: client,
+      learnerId: learnerId,
+      exampleId: exampleId,
+      knownRemoteRowId: supabaseId != null && supabaseId.isNotEmpty ? supabaseId : null,
+      repetitions: (row['repetitions'] as num?)?.toInt() ?? 0,
+      eFactor: (row['e_factor'] as num?)?.toDouble() ?? 2.5,
+      intervalDays: (row['interval_days'] as num?)?.toInt() ?? 0,
+      nextReviewAtIso: row['next_review_at']?.toString() ?? LocalDatabase.nowUtc(),
+      lastQuality: row['last_quality'] as int?,
+      reviewedCount: (row['reviewed_count'] as num?)?.toInt() ?? 0,
+    );
+    if (remoteId != null) {
+      await _localDb.markSynced(
+        LocalTable.englishExampleLearningStates,
+        row['local_id'] as int,
+        supabaseId: remoteId,
+      );
+    }
+  }
+
+  Future<void> _pushEnglishExampleCompositionStateRow(SupabaseClient client, Map<String, dynamic> row) async {
+    final learnerId = row['learner_id']?.toString() ?? '';
+    final exampleId = row['example_supabase_id']?.toString() ?? '';
+    if (learnerId.isEmpty || exampleId.isEmpty) return;
+
+    final supabaseId = row['supabase_id'] as String?;
+    bool? lastAnswerCorrect;
+    final lac = row['last_answer_correct'];
+    if (lac == null) {
+      lastAnswerCorrect = null;
+    } else {
+      lastAnswerCorrect = lac == 1 || lac == true;
+    }
+    bool? lastSelfRemembered;
+    final lsr = row['last_self_remembered'];
+    if (lsr == null) {
+      lastSelfRemembered = null;
+    } else {
+      lastSelfRemembered = lsr == 1 || lsr == true;
+    }
+
+    final remoteId = await EnglishExampleCompositionStateRemote.pushExactForSync(
+      client: client,
+      learnerId: learnerId,
+      exampleId: exampleId,
+      knownRemoteRowId: supabaseId != null && supabaseId.isNotEmpty ? supabaseId : null,
+      lastAnswerCorrect: lastAnswerCorrect,
+      lastSelfRemembered: lastSelfRemembered,
+      attempts: (row['attempts'] as num?)?.toInt() ?? 0,
+      correctCount: (row['correct_count'] as num?)?.toInt() ?? 0,
+      rememberedCount: (row['remembered_count'] as num?)?.toInt() ?? 0,
+      forgotCount: (row['forgot_count'] as num?)?.toInt() ?? 0,
+    );
+    if (remoteId != null) {
+      await _localDb.markSynced(
+        LocalTable.englishExampleCompositionStates,
+        row['local_id'] as int,
+        supabaseId: remoteId,
+      );
     }
   }
 

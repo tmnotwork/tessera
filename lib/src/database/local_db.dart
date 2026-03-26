@@ -1,7 +1,35 @@
 import 'package:sqflite/sqflite.dart';
 
 /// ローカルDBのバージョン（双方向同期用スキーマ）
-const int kLocalDbVersion = 8;
+const int kLocalDbVersion = 12;
+
+/// 勉強時間セッション（ローカル + SyncEngine から Supabase へ Push / Pull）
+Future<void> createStudySessionsTable(Database db) async {
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS study_sessions (
+      local_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      supabase_id   TEXT UNIQUE,
+      dirty         INTEGER NOT NULL DEFAULT 1,
+      deleted       INTEGER NOT NULL DEFAULT 0,
+      synced_at     TEXT,
+      updated_at    TEXT NOT NULL DEFAULT '',
+      session_type  TEXT NOT NULL,
+      content_id    TEXT,
+      content_title TEXT,
+      unit          TEXT,
+      subject_id    TEXT,
+      subject_name  TEXT,
+      tts_sec       INTEGER NOT NULL DEFAULT 0,
+      started_at    TEXT NOT NULL,
+      ended_at      TEXT,
+      duration_sec  INTEGER,
+      created_at    TEXT NOT NULL
+    )
+  ''');
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS ix_study_sessions_started_at ON study_sessions(started_at)',
+  );
+}
 
 /// 既存の knowledge_local はバージョン2で作成。バージョン3で local_* テーブルを追加。
 Future<void> createLocalSyncTables(Database db) async {
@@ -226,4 +254,63 @@ Future<void> createLocalSyncTables(Database db) async {
   await db.execute('CREATE INDEX IF NOT EXISTS ix_local_question_answer_logs_supabase_id ON local_question_answer_logs(supabase_id)');
   await db.execute('CREATE INDEX IF NOT EXISTS ix_local_question_learning_states_supabase_id ON local_question_learning_states(supabase_id)');
   await db.execute('CREATE INDEX IF NOT EXISTS ix_local_question_learning_states_due ON local_question_learning_states(learner_id, next_review_at)');
+
+  await createEnglishExampleStateTables(db);
+}
+
+/// 英語例文 SM-2・英作文の学習状態（ローカル主、SyncEngine で Pull/Push）
+Future<void> createEnglishExampleStateTables(Database db) async {
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS local_english_example_learning_states (
+      local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supabase_id TEXT UNIQUE,
+      dirty INTEGER NOT NULL DEFAULT 1,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      synced_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      learner_id TEXT NOT NULL,
+      example_supabase_id TEXT NOT NULL,
+      repetitions INTEGER NOT NULL DEFAULT 0,
+      e_factor REAL NOT NULL DEFAULT 2.5,
+      interval_days INTEGER NOT NULL DEFAULT 0,
+      next_review_at TEXT NOT NULL,
+      last_quality INTEGER,
+      reviewed_count INTEGER NOT NULL DEFAULT 0,
+      UNIQUE (learner_id, example_supabase_id)
+    )
+  ''');
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS ix_local_eels_supabase_id ON local_english_example_learning_states(supabase_id)',
+  );
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS ix_local_eels_learner_example ON local_english_example_learning_states(learner_id, example_supabase_id)',
+  );
+
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS local_english_example_composition_states (
+      local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supabase_id TEXT UNIQUE,
+      dirty INTEGER NOT NULL DEFAULT 1,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      synced_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      learner_id TEXT NOT NULL,
+      example_supabase_id TEXT NOT NULL,
+      last_answer_correct INTEGER,
+      last_self_remembered INTEGER,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      correct_count INTEGER NOT NULL DEFAULT 0,
+      remembered_count INTEGER NOT NULL DEFAULT 0,
+      forgot_count INTEGER NOT NULL DEFAULT 0,
+      UNIQUE (learner_id, example_supabase_id)
+    )
+  ''');
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS ix_local_eecs_supabase_id ON local_english_example_composition_states(supabase_id)',
+  );
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS ix_local_eecs_learner_example ON local_english_example_composition_states(learner_id, example_supabase_id)',
+  );
 }

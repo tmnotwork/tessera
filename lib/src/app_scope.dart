@@ -17,6 +17,10 @@ bool learnerProfileUserIdShowsManageShortcut(String? profileUserId) =>
 
 class _OpenManageNotifier {
   void Function(BuildContext context)? openManage;
+
+  /// 教師用管理タブへ切り替えたうえで、英語例文DB（`EnglishExampleListScreen`）を開く。
+  /// 英作文・例文まわりの「教材を編集」から使用する。
+  void Function(BuildContext context)? openManageEnglishExamples;
 }
 
 /// 認証状態（ログイン・ログアウト・ロール）を管理する。
@@ -77,7 +81,6 @@ class AppAuthNotifier {
   Future<String?> fetchProfileUserId() async {
     if (!isLoggedIn) return null;
     if (_profileUserIdLoaded) return _profileUserId;
-    _profileUserIdLoaded = true;
     try {
       var row = await Supabase.instance.client
           .from('profiles')
@@ -94,6 +97,7 @@ class AppAuthNotifier {
       }
       final raw = row?['user_id']?.toString().trim();
       _profileUserId = (raw != null && raw.isNotEmpty) ? raw : null;
+      _profileUserIdLoaded = true;
     } catch (e, st) {
       _profileUserId = null;
       assert(() {

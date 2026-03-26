@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -17,8 +17,8 @@ import '../sync/knowledge_save_remote_status.dart';
 import '../utils/platform_utils.dart';
 import '../widgets/edit_intents.dart';
 import '../widgets/explanation_text.dart';
-import '../supabase/english_example_composition_state_remote.dart';
-import '../supabase/english_example_learning_state_remote.dart';
+import '../sync/english_example_state_sync.dart';
+import '../sync/sync_engine.dart';
 import '../utils/knowledge_learner_mem_status.dart';
 import 'english_example_composition_screen.dart';
 import 'knowledge_edit_screen.dart';
@@ -248,15 +248,18 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
           }
         }
         if (exampleIds.isNotEmpty) {
-          states = await EnglishExampleLearningStateRemote.fetchStates(
+          final localDb = widget.localDatabase ?? SyncEngine.maybeLocalDb;
+          states = await EnglishExampleStateSync.fetchLearningStatesHybrid(
             client: client,
             learnerId: learnerId,
             exampleIds: exampleIds,
+            localDb: localDb,
           );
-          compStates = await EnglishExampleCompositionStateRemote.fetchStates(
+          compStates = await EnglishExampleStateSync.fetchCompositionStatesHybrid(
             client: client,
             learnerId: learnerId,
             exampleIds: exampleIds,
+            localDb: localDb,
           );
         }
       }

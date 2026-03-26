@@ -1,12 +1,18 @@
+import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../database/local_database.dart';
 import '../models/english_example.dart';
 import '../services/sm2_calculator.dart';
+import '../services/study_timer_service.dart';
 import '../services/tts_service.dart';
 import '../supabase/english_example_learning_state_remote.dart';
+import '../sync/english_example_state_sync.dart';
+import '../sync/sync_engine.dart';
 import '../widgets/english_example_sm2_rating_row.dart';
 import 'tts_setting_screen.dart';
 
@@ -25,7 +31,7 @@ import 'tts_setting_screen.dart';
 ///   - 「回答を表示」は表示のみ（音声は付けない）
 ///   - ループ・ランダム・SM-2・前後カードなどは読み上げモードと同じ
 ///
-/// SM-2 保存は評価ボタン押下時に Supabase へ upsert。
+/// SM-2 保存: ネイティブではローカルに dirty 記録し [SyncEngine] が Push。Web は従来どおり Supabase 直書き。
 class EnglishExampleSolveScreen extends StatefulWidget {
   const EnglishExampleSolveScreen({
     super.key,
@@ -96,6 +102,24 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
     }
   }
 
+  Future<void> _restartEnglishExampleStudySession() async {
+    if (_displayOrder.isEmpty) {
+      await StudyTimerService.instance.endSession();
+      return;
+    }
+    await StudyTimerService.instance.endSession();
+    if (!mounted || _displayOrder.isEmpty) return;
+    final ex = _current;
+    await StudyTimerService.instance.startSession(
+      sessionType: 'english_example',
+      contentId: ex.id,
+      contentTitle: ex.frontJa,
+      subjectId: null,
+      subjectName: widget.subjectName,
+      unit: null,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -110,12 +134,14 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
       _currentState = _statesCache[_current.id];
       // cardMode では自動読み上げが無く、この後に setState が無いと初回の空表示のままになる。
       setState(() {});
+      unawaited(_restartEnglishExampleStudySession());
       _maybeAutoStartSpeaking();
     });
   }
 
   @override
   void dispose() {
+    unawaited(StudyTimerService.instance.endSession());
     TtsService.stop();
     super.dispose();
   }
@@ -354,6 +380,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
         _showAnswer = false;
         _showRatingButtons = false;
       });
+      unawaited(_restartEnglishExampleStudySession());
       await _showRoundCompletedDialog();
       return;
     }
@@ -378,6 +405,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
       _currentState = _statesCache[_current.id];
     });
 
+    unawaited(_restartEnglishExampleStudySession());
     _maybeAutoStartSpeaking();
   }
 
@@ -464,6 +492,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
             _showAnswer = false;
             _showRatingButtons = false;
           });
+          unawaited(_restartEnglishExampleStudySession());
           await _showRoundCompletedDialog();
         }
         return;
@@ -493,6 +522,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
       _ttsPlaying = !widget.cardMode;
       _currentState = _statesCache[_current.id];
     });
+    unawaited(_restartEnglishExampleStudySession());
     _maybeAutoStartSpeaking();
   }
 
@@ -526,6 +556,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
       _ttsPlaying = !widget.cardMode;
       _currentState = _statesCache[_current.id];
     });
+    unawaited(_restartEnglishExampleStudySession());
     _maybeAutoStartSpeaking();
   }
 
@@ -617,6 +648,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
     if (_displayOrder.isEmpty) return;
     _orderPos = _orderPos.clamp(0, _displayOrder.length - 1);
     _currentState = _statesCache[_current.id];
+    unawaited(_restartEnglishExampleStudySession());
     _maybeAutoStartSpeaking();
   }
 
@@ -656,17 +688,44 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
 
     setState(() => _saving = true);
 
-    final newId = await EnglishExampleLearningStateRemote.upsertState(
-      client: _client,
-      learnerId: learnerId,
-      exampleId: _current.id,
-      knownRemoteRowId: _remoteRowId,
-      stateFields: {
-        ...result.toSupabaseFields(),
-        'reviewed_count': (_currentState?['reviewed_count'] as int?) ?? 0,
-      },
-      quality: quality,
-    );
+    final newReviewed = ((_currentState?['reviewed_count'] as int?) ?? 0) + 1;
+    String? newId;
+
+    if (!kIsWeb && SyncEngine.isInitialized) {
+      await EnglishExampleStateSync.upsertLearningAfterRating(
+        SyncEngine.instance.localDb,
+        learnerId: learnerId,
+        exampleId: _current.id,
+        knownRemoteRowId: _remoteRowId,
+        sm2: result,
+        quality: quality,
+        reviewedCount: newReviewed,
+      );
+      newId = _remoteRowId;
+      final rows = await SyncEngine.instance.localDb.db.query(
+        LocalTable.englishExampleLearningStates,
+        where: 'learner_id = ? AND example_supabase_id = ?',
+        whereArgs: [learnerId, _current.id],
+        limit: 1,
+      );
+      if (rows.isNotEmpty) {
+        final sid = rows.first['supabase_id']?.toString();
+        if (sid != null && sid.isNotEmpty) newId = sid;
+      }
+      unawaited(SyncEngine.instance.pushDirtyEnglishExampleStatesIfOnline());
+    } else {
+      newId = await EnglishExampleLearningStateRemote.upsertState(
+        client: _client,
+        learnerId: learnerId,
+        exampleId: _current.id,
+        knownRemoteRowId: _remoteRowId,
+        stateFields: {
+          ...result.toSupabaseFields(),
+          'reviewed_count': (_currentState?['reviewed_count'] as int?) ?? 0,
+        },
+        quality: quality,
+      );
+    }
 
     if (mounted) {
       final updated = <String, dynamic>{
@@ -676,7 +735,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
         'learner_id': learnerId,
         'example_id': _current.id,
         'last_quality': quality,
-        'reviewed_count': ((_currentState?['reviewed_count'] as int?) ?? 0) + 1,
+        'reviewed_count': newReviewed,
       };
       _statesCache[_current.id] = updated;
       setState(() => _saving = false);
@@ -698,6 +757,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
         _showRatingButtons = false;
         _currentState = _statesCache[_current.id];
       });
+      unawaited(_restartEnglishExampleStudySession());
       _maybeAutoStartSpeaking();
       return;
     }
@@ -713,6 +773,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
         _showRatingButtons = false;
         _currentState = _statesCache[_current.id];
       });
+      unawaited(_restartEnglishExampleStudySession());
       _maybeAutoStartSpeaking();
     } else {
       Navigator.of(context).pop();
@@ -727,7 +788,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
   Widget build(BuildContext context) {
     if (widget.examples.isEmpty) {
       return Scaffold(
-        appBar: AppBar(title: Text(widget.subjectName ?? '英語例文')),
+        appBar: AppBar(title: Text(widget.subjectName ?? '例文読み上げ')),
         body: const Center(child: Text('出題する例文がありません')),
       );
     }
@@ -735,7 +796,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
     if (_displayOrder.isEmpty) {
       return Scaffold(
         appBar: AppBar(
-          title: Text(widget.subjectName ?? '英語例文'),
+          title: Text(widget.subjectName ?? '例文読み上げ'),
           actions: [
             IconButton(
               icon: const Icon(Icons.settings),
@@ -788,7 +849,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
     if (desc != null && desc.isNotEmpty) {
       title += ' · $desc';
     }
-    title += ': ${widget.subjectName ?? '英語例文'}';
+    title += ': ${widget.subjectName ?? '例文読み上げ'}';
     if (_displayOrder.length > 1) {
       title += '（${_orderPos + 1} / ${_displayOrder.length}）';
     }

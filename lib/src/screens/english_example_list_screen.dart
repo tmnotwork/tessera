@@ -1,13 +1,17 @@
-﻿import 'package:flutter/material.dart';
+import 'dart:async';
+
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../app_scope.dart';
 import '../models/english_example.dart';
-import '../supabase/english_example_composition_state_remote.dart';
-import '../supabase/english_example_learning_state_remote.dart';
+import '../sync/english_example_state_sync.dart';
 import '../sync/ensure_synced_for_local_read.dart';
+import '../sync/sync_engine.dart';
 import '../utils/english_example_knowledge_order.dart';
 import '../utils/english_example_review_filter.dart';
 import 'english_example_composition_chapter_list_screen.dart';
+import 'english_example_composition_progress_screen.dart';
 import 'english_example_composition_screen.dart';
 import 'english_example_solve_screen.dart';
 
@@ -59,6 +63,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   bool _loading = true;
   bool _schemaMissing = false;
   String? _error;
+  bool _showManageEdit = false;
 
   _StudyFilter _studyFilter = _StudyFilter.dueToday;
 
@@ -74,6 +79,17 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   void initState() {
     super.initState();
     _load();
+    if (widget.isLearnerMode) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_refreshManageShortcut());
+      });
+    }
+  }
+
+  Future<void> _refreshManageShortcut() async {
+    if (!widget.isLearnerMode || !mounted) return;
+    final show = await shouldShowLearnerFlowManageShortcut();
+    if (mounted) setState(() => _showManageEdit = show);
   }
 
   // ──────────────────────────────
@@ -93,12 +109,12 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       final knowledge = widget.subjectId == null
           ? await _client
                 .from('knowledge')
-                .select('id, content, unit')
+                .select('id, content, unit, display_order, created_at')
                 .order('display_order', ascending: true)
                 .order('created_at', ascending: true)
           : await _client
                 .from('knowledge')
-                .select('id, content, unit')
+                .select('id, content, unit, display_order, created_at')
                 .eq('subject_id', widget.subjectId!)
                 .order('display_order', ascending: true)
                 .order('created_at', ascending: true);
@@ -110,7 +126,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
                   .from('english_examples')
                   .select(
                     'id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, '
-                    'knowledge:knowledge_id(id, content, unit)',
+                    'knowledge:knowledge_id(id, content, unit, display_order, created_at)',
                   )
                   .order('display_order', ascending: true)
                   .order('created_at', ascending: true)
@@ -118,12 +134,13 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
                   .from('english_examples')
                   .select(
                     'id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, '
-                    'knowledge:knowledge_id(id, content, unit)',
+                    'knowledge:knowledge_id(id, content, unit, display_order, created_at)',
                   )
                   .eq('knowledge.subject_id', widget.subjectId!)
                   .order('display_order', ascending: true)
                   .order('created_at', ascending: true);
         examples = List<Map<String, dynamic>>.from(rows);
+        sortEnglishExampleRowsLikeKnowledgeList(examples);
       } on PostgrestException catch (e) {
         final missingTable =
             e.code == 'PGRST205' &&
@@ -141,22 +158,23 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       Map<String, Map<String, dynamic>> states = {};
       if (widget.isLearnerMode && _learnerId != null && examples.isNotEmpty) {
         final ids = examples.map((e) => e['id'] as String).toList();
-        states = await EnglishExampleLearningStateRemote.fetchStates(
+        states = await EnglishExampleStateSync.fetchLearningStatesHybrid(
           client: _client,
           learnerId: _learnerId!,
           exampleIds: ids,
+          localDb: SyncEngine.maybeLocalDb,
         );
       }
 
       Map<String, Map<String, dynamic>> compositionStates = {};
       if (_compositionMenuOnly && _learnerId != null && examples.isNotEmpty) {
         final ids = examples.map((e) => e['id'] as String).toList();
-        compositionStates =
-            await EnglishExampleCompositionStateRemote.fetchStates(
-              client: _client,
-              learnerId: _learnerId!,
-              exampleIds: ids,
-            );
+        compositionStates = await EnglishExampleStateSync.fetchCompositionStatesHybrid(
+          client: _client,
+          learnerId: _learnerId!,
+          exampleIds: ids,
+          localDb: SyncEngine.maybeLocalDb,
+        );
       }
 
       if (!mounted) return;
@@ -166,6 +184,9 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
         _learningStates = states;
         _compositionStates = compositionStates;
       });
+      if (widget.isLearnerMode) {
+        unawaited(_refreshManageShortcut());
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e.toString());
@@ -721,6 +742,28 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       appBar: AppBar(
         title: Text(title),
         actions: [
+          if (widget.isLearnerMode && _showManageEdit)
+            IconButton(
+              icon: const Icon(Icons.edit),
+              tooltip: '教材を編集',
+              onPressed: () =>
+                  openManageNotifier.openManageEnglishExamples?.call(context),
+            ),
+          if (widget.isLearnerMode && _compositionMenuOnly)
+            IconButton(
+              icon: const Icon(Icons.insights_outlined),
+              tooltip: '学習状況',
+              onPressed: _loading
+                  ? null
+                  : () {
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute<void>(
+                          builder: (context) =>
+                              const EnglishExampleCompositionProgressScreen(),
+                        ),
+                      );
+                    },
+            ),
           if (widget.isLearnerMode &&
               !_readAloudMenuOnly &&
               !_compositionMenuOnly &&

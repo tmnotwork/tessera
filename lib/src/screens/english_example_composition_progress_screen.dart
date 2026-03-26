@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:characters/characters.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -8,15 +8,15 @@ import '../sync/english_example_state_sync.dart';
 import '../sync/ensure_synced_for_local_read.dart';
 import '../sync/sync_engine.dart';
 import '../utils/english_example_knowledge_order.dart';
-import '../utils/english_example_review_filter.dart';
-import 'english_example_solve_screen.dart';
+import 'english_example_composition_screen.dart';
 
-/// 学習者向け：英語例文の暗記状況を単元ごとに色付きタイルで表示する。
-class EnglishExampleProgressScreen extends StatefulWidget {
-  const EnglishExampleProgressScreen({super.key});
+/// 学習者向け：英作文モードの記録（正誤・試行回数）を単元ごとに色付きタイルで表示する。
+class EnglishExampleCompositionProgressScreen extends StatefulWidget {
+  const EnglishExampleCompositionProgressScreen({super.key});
 
   @override
-  State<EnglishExampleProgressScreen> createState() => _EnglishExampleProgressScreenState();
+  State<EnglishExampleCompositionProgressScreen> createState() =>
+      _EnglishExampleCompositionProgressScreenState();
 }
 
 enum _TileStatus { unseen, notRemembered, remembered }
@@ -31,14 +31,14 @@ class _ExampleTileItem {
   final _TileStatus status;
 }
 
-class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScreen>
+class _EnglishExampleCompositionProgressScreenState
+    extends State<EnglishExampleCompositionProgressScreen>
     with RouteAware, WidgetsBindingObserver {
   final _client = Supabase.instance.client;
 
   bool _loading = true;
   String? _error;
   Map<String, List<_ExampleTileItem>> _groupedTiles = {};
-  Map<String, Map<String, dynamic>> _learningStates = {};
   bool _routeSubscribed = false;
 
   String? get _learnerId => _client.auth.currentUser?.id;
@@ -118,22 +118,13 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
       Map<String, Map<String, dynamic>> states = {};
       final learnerId = _learnerId;
       if (learnerId != null && examples.isNotEmpty) {
-        try {
-          final ids = examples.map((e) => e['id'] as String).toList();
-          states = await EnglishExampleStateSync.fetchLearningStatesHybrid(
-            client: _client,
-            learnerId: learnerId,
-            exampleIds: ids,
-            localDb: SyncEngine.maybeLocalDb,
-          );
-        } catch (e, st) {
-          if (kDebugMode) {
-            debugPrint('EnglishExampleProgress: learning states 取得失敗: $e\n$st');
-          }
-          if (mounted) {
-            setState(() => _error = '学習状況の取得に失敗しました。ログイン状態と DB を確認してください。\n$e');
-          }
-        }
+        final ids = examples.map((e) => e['id'] as String).toList();
+        states = await EnglishExampleStateSync.fetchCompositionStatesHybrid(
+          client: _client,
+          learnerId: learnerId,
+          exampleIds: ids,
+          localDb: SyncEngine.maybeLocalDb,
+        );
       }
 
       if (!mounted) return;
@@ -149,7 +140,7 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
           if (u != null && u.isNotEmpty) chapter = u;
         }
         final state = states[id];
-        final status = _tileStatusFromState(state);
+        final status = _tileStatusFromCompositionState(state);
         grouped.putIfAbsent(chapter, () => []).add(
               _ExampleTileItem(
                 rawRow: Map<String, dynamic>.from(row),
@@ -186,7 +177,6 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
 
       setState(() {
         _groupedTiles = sortedGrouped;
-        _learningStates = states;
       });
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -195,10 +185,15 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
     }
   }
 
-  _TileStatus _tileStatusFromState(Map<String, dynamic>? state) {
+  /// [english_example_composition_chapter_list_screen] の要練習判定に合わせる。
+  _TileStatus _tileStatusFromCompositionState(Map<String, dynamic>? state) {
     if (state == null) return _TileStatus.unseen;
-    if (EnglishExampleReviewFilter.needsReview(state)) return _TileStatus.notRemembered;
-    return _TileStatus.remembered;
+    final attempts = (state['attempts'] as num?)?.toInt() ?? 0;
+    if (attempts <= 0) return _TileStatus.unseen;
+    final last = state['last_answer_correct'] as bool?;
+    if (last == false) return _TileStatus.notRemembered;
+    if (last == true) return _TileStatus.remembered;
+    return _TileStatus.unseen;
   }
 
   Color _tileColor(BuildContext context, _TileStatus status) {
@@ -215,8 +210,6 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
 
   static const double _tileExtent = 24;
 
-  /// チャプター名を書記素ごとに [_tileExtent] 四方のタイルに分割（隙間なし）。
-  /// 進捗マスと色を反転（暗い地・明るい文字）。
   Widget _chapterLabel(BuildContext context, String name) {
     if (name.isEmpty) return const SizedBox.shrink();
     final scheme = Theme.of(context).colorScheme;
@@ -256,7 +249,7 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
 
   Widget _statusTile(BuildContext context, _ExampleTileItem item) {
     return InkWell(
-      onTap: () => _openExample(item.rawRow),
+      onTap: () => _openComposition(item.rawRow),
       borderRadius: BorderRadius.circular(6),
       child: Container(
         width: _tileExtent,
@@ -273,18 +266,14 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
     );
   }
 
-  Future<void> _openExample(Map<String, dynamic> raw) async {
+  Future<void> _openComposition(Map<String, dynamic> raw) async {
     final ex = EnglishExample.fromRow(raw);
-    final initial = <String, Map<String, dynamic>>{};
-    final s = _learningStates[ex.id];
-    if (s != null) initial[ex.id] = s;
-
-    await Navigator.of(context).push(
+    await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (context) => EnglishExampleSolveScreen(
+        builder: (context) => EnglishExampleCompositionScreen(
           examples: [ex],
-          subjectName: '例文読み上げ',
-          initialStates: initial,
+          subjectName: '英作文出題',
+          sessionDescriptor: '進捗から',
         ),
       ),
     );
@@ -293,7 +282,7 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
 
   @override
   Widget build(BuildContext context) {
-    const title = '例文読み上げの学習状況';
+    const title = '英作文の学習状況';
 
     if (_loading) {
       return Scaffold(
@@ -342,19 +331,46 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Wrap(
-          spacing: 0,
-          runSpacing: 0,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            for (final entry in _groupedTiles.entries) ...[
-              _chapterLabel(context, entry.key),
-              for (final item in entry.value) _statusTile(context, item),
-            ],
-          ],
-        ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_learnerId == null)
+            Material(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Text(
+                  'ログインすると英作文の記録に応じた色が表示されます。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Text(
+              'グレー: 未挑戦　赤: 要練習（未回答または直近不正解）　緑: 直近正解',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              child: Wrap(
+                spacing: 0,
+                runSpacing: 0,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  for (final entry in _groupedTiles.entries) ...[
+                    _chapterLabel(context, entry.key),
+                    for (final item in entry.value) _statusTile(context, item),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

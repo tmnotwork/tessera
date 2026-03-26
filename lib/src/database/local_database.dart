@@ -14,6 +14,12 @@ class LocalTable {
   static const questionKnowledge = 'local_question_knowledge';
   static const questionAnswerLogs = 'local_question_answer_logs';
   static const questionLearningStates = 'local_question_learning_states';
+  /// 勉強時間セッション（ローカル主、Supabase へ Push のみ）
+  static const studySessions = 'study_sessions';
+  /// 英語例文 SM-2（読み上げ）
+  static const englishExampleLearningStates = 'local_english_example_learning_states';
+  /// 英作文モードの集計
+  static const englishExampleCompositionStates = 'local_english_example_composition_states';
 }
 
 /// 双方向同期用ローカルDBの CRUD と dirty 管理。
