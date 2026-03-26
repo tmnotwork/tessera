@@ -8,6 +8,7 @@ import '../models/english_example.dart';
 import '../sync/english_example_state_sync.dart';
 import '../sync/sync_engine.dart';
 import '../utils/knowledge_learner_mem_status.dart';
+import 'english_example_list_screen.dart';
 import 'english_example_composition_progress_screen.dart';
 import 'english_example_composition_screen.dart';
 
@@ -70,6 +71,19 @@ class _EnglishExampleCompositionChapterListScreenState
     if (!mounted) return;
     final show = await shouldShowLearnerFlowManageShortcut();
     if (mounted) setState(() => _showManageEdit = show);
+  }
+
+  void _openManageEnglishExamples() {
+    final cb = openManageNotifier.openManageEnglishExamples;
+    if (cb != null) {
+      cb(context);
+      return;
+    }
+    Navigator.of(context, rootNavigator: true).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => const EnglishExampleListScreen(),
+      ),
+    );
   }
 
   Future<void> _loadStates() async {
@@ -163,8 +177,7 @@ class _EnglishExampleCompositionChapterListScreenState
             IconButton(
               icon: const Icon(Icons.edit),
               tooltip: '教材を編集',
-              onPressed: () =>
-                  openManageNotifier.openManageEnglishExamples?.call(context),
+              onPressed: _openManageEnglishExamples,
             ),
           IconButton(
             icon: const Icon(Icons.insights_outlined),

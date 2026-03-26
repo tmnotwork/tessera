@@ -92,6 +92,19 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
     if (mounted) setState(() => _showManageEdit = show);
   }
 
+  void _openManageEnglishExamples() {
+    final cb = openManageNotifier.openManageEnglishExamples;
+    if (cb != null) {
+      cb(context);
+      return;
+    }
+    Navigator.of(context, rootNavigator: true).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => const EnglishExampleListScreen(),
+      ),
+    );
+  }
+
   // ──────────────────────────────
   // データ取得
   // ──────────────────────────────
@@ -746,8 +759,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
             IconButton(
               icon: const Icon(Icons.edit),
               tooltip: '教材を編集',
-              onPressed: () =>
-                  openManageNotifier.openManageEnglishExamples?.call(context),
+              onPressed: _openManageEnglishExamples,
             ),
           if (widget.isLearnerMode && _compositionMenuOnly)
             IconButton(

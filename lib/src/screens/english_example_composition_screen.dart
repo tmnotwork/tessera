@@ -12,6 +12,7 @@ import '../sync/english_example_state_sync.dart';
 import '../sync/sync_engine.dart';
 import '../utils/word_diff.dart';
 import '../widgets/diff_text_display.dart';
+import 'english_example_list_screen.dart';
 import 'english_example_composition_progress_screen.dart';
 
 /// 日本語を見て英語例文を入力し、答え合わせの正誤を自動記録する（読み上げの SM-2 とは別集計）
@@ -66,6 +67,19 @@ class _EnglishExampleCompositionScreenState extends State<EnglishExampleComposit
     if (mounted) setState(() => _showManageEdit = show);
   }
 
+  void _openManageEnglishExamples() {
+    final cb = openManageNotifier.openManageEnglishExamples;
+    if (cb != null) {
+      cb(context);
+      return;
+    }
+    Navigator.of(context, rootNavigator: true).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => const EnglishExampleListScreen(),
+      ),
+    );
+  }
+
   List<Widget> _compositionAppBarActions() {
     return [
       IconButton(
@@ -84,8 +98,7 @@ class _EnglishExampleCompositionScreenState extends State<EnglishExampleComposit
         IconButton(
           icon: const Icon(Icons.edit),
           tooltip: '教材を編集',
-          onPressed: () =>
-              openManageNotifier.openManageEnglishExamples?.call(context),
+          onPressed: _openManageEnglishExamples,
         ),
     ];
   }
