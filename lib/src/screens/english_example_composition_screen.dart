@@ -68,14 +68,11 @@ class _EnglishExampleCompositionScreenState extends State<EnglishExampleComposit
   }
 
   void _openManageEnglishExamples() {
-    final cb = openManageNotifier.openManageEnglishExamples;
-    if (cb != null) {
-      cb(context);
-      return;
-    }
     Navigator.of(context, rootNavigator: true).push<void>(
       MaterialPageRoute<void>(
-        builder: (context) => const EnglishExampleListScreen(),
+        builder: (context) => EnglishExampleListScreen(
+          initialEditExampleId: _current.id,
+        ),
       ),
     );
   }

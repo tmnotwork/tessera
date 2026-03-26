@@ -29,6 +29,7 @@ class EnglishExampleListScreen extends StatefulWidget {
     this.isLearnerMode = false,
     this.readAloudMenuOnly = false,
     this.compositionMenuOnly = false,
+    this.initialEditExampleId,
   });
 
   final String? subjectId;
@@ -42,6 +43,9 @@ class EnglishExampleListScreen extends StatefulWidget {
 
   /// true かつ [isLearnerMode]: チャプター一覧 → 問題一覧 → [EnglishExampleCompositionScreen]
   final bool compositionMenuOnly;
+
+  /// 指定時、初回ロード後に該当IDの編集ダイアログを自動表示する。
+  final String? initialEditExampleId;
 
   @override
   State<EnglishExampleListScreen> createState() =>
@@ -64,6 +68,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   bool _schemaMissing = false;
   String? _error;
   bool _showManageEdit = false;
+  bool _didOpenInitialEdit = false;
 
   _StudyFilter _studyFilter = _StudyFilter.dueToday;
 
@@ -90,6 +95,27 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
     if (!widget.isLearnerMode || !mounted) return;
     final show = await shouldShowLearnerFlowManageShortcut();
     if (mounted) setState(() => _showManageEdit = show);
+  }
+
+  void _tryOpenInitialEditOnce() {
+    if (_didOpenInitialEdit) return;
+    final targetId = widget.initialEditExampleId?.trim();
+    if (targetId == null || targetId.isEmpty) return;
+
+    Map<String, dynamic>? row;
+    for (final e in _items) {
+      if (e['id']?.toString() == targetId) {
+        row = Map<String, dynamic>.from(e);
+        break;
+      }
+    }
+
+    _didOpenInitialEdit = true;
+    if (row == null || !mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_openEditor(current: row));
+    });
   }
 
   void _openManageEnglishExamples() {
@@ -197,6 +223,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
         _learningStates = states;
         _compositionStates = compositionStates;
       });
+      _tryOpenInitialEditOnce();
       if (widget.isLearnerMode) {
         unawaited(_refreshManageShortcut());
       }
