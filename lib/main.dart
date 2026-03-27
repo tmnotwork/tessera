@@ -27,6 +27,7 @@ import 'src/screens/four_choice_list_screen.dart';
 import 'src/screens/knowledge_list_screen.dart';
 import 'src/screens/english_example_list_screen.dart';
 import 'src/screens/learner_home_screen.dart';
+import 'src/screens/learner_learning_status_menu_screen.dart';
 import 'src/screens/learner_login_screen.dart';
 import 'src/screens/memorization_list_screen.dart';
 import 'src/learner_admin.dart';
@@ -450,7 +451,11 @@ class RootScaffold extends StatefulWidget {
 class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver {
   /// Windows デスクトップ起動時は教師用管理を最初に表示（タブ順: 0学習 / 1知識DB / 2教師用管理）
   int _index = isWindows ? 2 : 0;
+  /// 学習者向け5タブの選択インデックス
+  int _learnerTabIndex = 0;
   String? _role;
+  /// 学習者のショートログインID（profiles.user_id）
+  String? _learnerDisplayId;
   bool _authReady = false;
   _LoginGateMode _loginGateMode = _LoginGateMode.choose;
   /// ログイン直後の「科目が取れるか」検証結果。null=未検証または成功、非null=失敗メッセージ（画面に表示）
@@ -559,21 +564,45 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
         subjectsCheck = '科目の取得に失敗しました: $e';
       }
     }
+    // 学習者の場合はショートログインIDを取得
+    String? learnerDisplayId;
+    if (role == 'learner' && appAuthNotifier.isLoggedIn) {
+      try {
+        learnerDisplayId = await appAuthNotifier.fetchProfileUserId();
+      } catch (_) {}
+    }
     if (mounted) {
       setState(() {
         _role = role;
         _authReady = true;
         _postLoginSubjectsCheck = subjectsCheck;
+        if (role == 'learner') _learnerDisplayId = learnerDisplayId;
       });
     }
   }
 
   void _switchToManageTab(BuildContext context) {
+    if (_role == 'teacher') {
+      // 教師は既に管理画面がルートなので何もしない
+      final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
+      navigator.popUntil((route) => route.isFirst);
+      return;
+    }
+    // 学習者フロー（'教師'ショートカット等）→ 管理画面をモーダルで表示
     final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
-    navigator.popUntil((route) => route.isFirst);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _index = 2);
-    });
+    navigator.push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => TeacherAdminPage(
+          localDb: widget.localDb,
+          localDatabase: widget.localDatabase,
+          onRefreshAuthAndRetry: () async {
+            appAuthNotifier.clearRoleCache();
+            await _refreshRole();
+            if (mounted) setState(() {});
+          },
+        ),
+      ),
+    );
   }
 
   /// 学習フローから「英語例文を編集」: タブ切替はせず、その場から編集画面を直接開く。
@@ -583,6 +612,192 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
     navigator.push<void>(
       MaterialPageRoute<void>(
         builder: (context) => const EnglishExampleListScreen(),
+      ),
+    );
+  }
+
+  /// 学習者向け：5タブのボトムナビ構成（abceed スタイル）
+  Widget _buildLearnerRoot() {
+    final tabs = <Widget>[
+      _LearnerReviewTab(displayId: _learnerDisplayId),
+      LearnerLearningStatusMenuScreen(localDatabase: widget.localDatabase),
+      _LearnerKnowledgeTab(localDatabase: widget.localDatabase),
+      const LearnerFourChoiceSolveScreen(),
+      const EnglishExampleListScreen(isLearnerMode: true, readAloudMenuOnly: true),
+    ];
+    return Scaffold(
+      body: Column(
+        children: [
+          if (_postLoginSubjectsCheck != null) _buildSubjectsCheckBanner(),
+          Expanded(child: tabs[_learnerTabIndex]),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _learnerTabIndex,
+        onDestinationSelected: (i) => setState(() => _learnerTabIndex = i),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.replay_outlined),
+            selectedIcon: Icon(Icons.replay),
+            label: '復習',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.bar_chart_outlined),
+            selectedIcon: Icon(Icons.bar_chart),
+            label: '学習状況',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.menu_book_outlined),
+            selectedIcon: Icon(Icons.menu_book),
+            label: '参考書',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.quiz_outlined),
+            selectedIcon: Icon(Icons.quiz),
+            label: '問題集',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.volume_up_outlined),
+            selectedIcon: Icon(Icons.volume_up),
+            label: '読み上げ',
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 教師向け：管理画面（ロール確認付き）
+  Widget _buildTeacherRoot() {
+    if (_role == 'teacher') {
+      final teacherEmail = appAuthNotifier.currentUser?.email ?? '';
+      return Scaffold(
+        body: Column(
+          children: [
+            if (_postLoginSubjectsCheck != null) _buildSubjectsCheckBanner(),
+            if (teacherEmail.isNotEmpty)
+              Material(
+                color: Theme.of(context).colorScheme.surfaceContainerHigh,
+                child: SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.person_outline,
+                            size: 16,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant),
+                        const SizedBox(width: 6),
+                        Text(
+                          '教師ID: $teacherEmail',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            Expanded(
+              child: TeacherAdminPage(
+                localDb: widget.localDb,
+                localDatabase: widget.localDatabase,
+                onRefreshAuthAndRetry: () async {
+                  appAuthNotifier.clearRoleCache();
+                  await _refreshRole();
+                  if (mounted) setState(() {});
+                },
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    // role == null（取得中 or 失敗）
+    if (_role == null && !_teacherTabRoleRetried) {
+      _teacherTabRoleRetried = true;
+      appAuthNotifier.clearRoleCache();
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await _refreshRole();
+        if (mounted) setState(() {});
+      });
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    // teacher 権限なし
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.lock_outline,
+                  size: 48, color: Theme.of(context).colorScheme.outline),
+              const SizedBox(height: 16),
+              const Text('このアカウントには教材管理の権限がありません'),
+              const SizedBox(height: 8),
+              Text(
+                '権限があるはずの場合は「再読み込み」を試すか、設定からログアウトして再度ログインしてください。',
+                style: Theme.of(context).textTheme.bodySmall,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('再読み込み'),
+                onPressed: () async {
+                  appAuthNotifier.clearRoleCache();
+                  await _refreshRole();
+                  if (mounted) setState(() {});
+                },
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.settings_outlined),
+                label: const Text('設定'),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (context) => const SettingsScreen(),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSubjectsCheckBanner() {
+    return Material(
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              Icon(Icons.warning_amber,
+                  color: Theme.of(context).colorScheme.onErrorContainer),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  _postLoginSubjectsCheck!,
+                  style: TextStyle(
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                      fontSize: 13),
+                ),
+              ),
+              TextButton(
+                onPressed: () =>
+                    setState(() => _postLoginSubjectsCheck = null),
+                child: const Text('閉じる'),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -697,7 +912,6 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
     openManageNotifier.openManageEnglishExamples =
         (ctx) => _rootScaffoldKey.currentState?._switchToManageTabAndOpenEnglishExamples(ctx);
 
-    // 未ログイン時はログインゲートのみ。知識DBなどはログイン後のみ表示する。
     if (!_authReady) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -710,73 +924,12 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
       );
     }
 
-    final pages = <Widget>[
-      _buildLearnerTab(),
-      KnowledgeDbHomePage(localDb: widget.localDb, localDatabase: widget.localDatabase),
-      _buildTeacherTab(),
-      if (isDesktop) _buildLearnerMobilePreviewTab(),
-    ];
-
-    return Scaffold(
-      body: Column(
-        children: [
-          if (_postLoginSubjectsCheck != null)
-            Material(
-              color: Theme.of(context).colorScheme.errorContainer,
-              child: SafeArea(
-                bottom: false,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Row(
-                    children: [
-                      Icon(Icons.warning_amber, color: Theme.of(context).colorScheme.onErrorContainer),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          _postLoginSubjectsCheck!,
-                          style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer, fontSize: 13),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () => setState(() => _postLoginSubjectsCheck = null),
-                        child: const Text('閉じる'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          Expanded(child: pages[_index]),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: [
-          const NavigationDestination(
-            icon: Icon(Icons.school_outlined),
-            selectedIcon: Icon(Icons.school),
-            label: '学習',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.menu_book_outlined),
-            selectedIcon: Icon(Icons.menu_book),
-            label: '知識DB',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.manage_search_outlined),
-            selectedIcon: Icon(Icons.manage_search),
-            label: '教師用管理',
-          ),
-          if (isDesktop)
-            const NavigationDestination(
-              icon: Icon(Icons.smartphone_outlined),
-              selectedIcon: Icon(Icons.smartphone),
-              label: 'スマホ幅',
-            ),
-        ],
-      ),
-    );
+    // ロールに応じてUI分岐
+    if (_role == 'learner' ||
+        (_role == null && _loginGateMode == _LoginGateMode.learner)) {
+      return _buildLearnerRoot();
+    }
+    return _buildTeacherRoot();
   }
 }
 
@@ -849,6 +1002,206 @@ class _LoginGateScreen extends StatelessWidget {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// 学習者向け新規タブウィジェット
+// ---------------------------------------------------------------------------
+
+/// 復習タブ（プレースホルダ）：生徒IDを表示し、近日追加予定のメッセージを表示
+class _LearnerReviewTab extends StatelessWidget {
+  const _LearnerReviewTab({this.displayId});
+
+  final String? displayId;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('復習'),
+        actions: [
+          const ForceSyncIconButton(),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: '設定',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const SettingsScreen(),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.badge_outlined, size: 16, color: scheme.onPrimaryContainer),
+                    const SizedBox(width: 6),
+                    Text(
+                      displayId != null ? '生徒ID: $displayId' : '生徒',
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                            color: scheme.onPrimaryContainer,
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 40),
+              Icon(Icons.replay, size: 72, color: scheme.outline),
+              const SizedBox(height: 20),
+              Text(
+                '復習',
+                style: Theme.of(context)
+                    .textTheme
+                    .headlineSmall
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '復習機能は近日公開予定です',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 参考書タブ：科目一覧から知識カードへ（学習者モード）
+class _LearnerKnowledgeTab extends StatefulWidget {
+  const _LearnerKnowledgeTab({this.localDatabase});
+
+  final LocalDatabase? localDatabase;
+
+  @override
+  State<_LearnerKnowledgeTab> createState() => _LearnerKnowledgeTabState();
+}
+
+class _LearnerKnowledgeTabState extends State<_LearnerKnowledgeTab> {
+  List<Map<String, dynamic>> _subjects = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _fetchSubjects();
+    });
+  }
+
+  Future<void> _fetchSubjects() async {
+    if (mounted) setState(() { _loading = true; _error = null; });
+    try {
+      if (widget.localDatabase != null) {
+        final repo = createSubjectRepository(widget.localDatabase);
+        final rows = await repo.getSubjectsOrderByDisplayOrder();
+        if (mounted) setState(() { _subjects = rows; _loading = false; });
+      } else {
+        final rows = await Supabase.instance.client
+            .from('subjects')
+            .select()
+            .order('display_order');
+        if (mounted) {
+          setState(() {
+            _subjects = List<Map<String, dynamic>>.from(rows);
+            _loading = false;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('参考書'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loading ? null : _fetchSubjects,
+            tooltip: '再読み込み',
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(_error!,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                            textAlign: TextAlign.center),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: _fetchSubjects,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('再試行'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : _subjects.isEmpty
+                  ? const Center(child: Text('科目がありません'))
+                  : ListView.separated(
+                      itemCount: _subjects.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final s = _subjects[index];
+                        final subjectId = s['id'] as String?;
+                        final subjectName = s['name']?.toString() ?? '科目';
+                        if (subjectId == null) return const SizedBox.shrink();
+                        return ListTile(
+                          title: Text(subjectName),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => KnowledgeListScreen(
+                                  subjectId: subjectId,
+                                  subjectName: subjectName,
+                                  localDatabase: widget.localDatabase,
+                                  isLearnerMode: true,
+                                ),
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 /// 起動時初期画面：知識DB の科目一覧（タップでその科目の知識カード一覧へ）
 /// 表示されるのはログイン後のみ（未ログイン時はタブ自体を出さない）。
