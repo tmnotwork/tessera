@@ -582,13 +582,22 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
   }
 
   void _switchToManageTab(BuildContext context) {
+    // デスクトップは従来通りタブ切替
+    if (isDesktop) {
+      final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
+      navigator.popUntil((route) => route.isFirst);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _index = 2);
+      });
+      return;
+    }
     if (_role == 'teacher') {
-      // 教師は既に管理画面がルートなので何もしない
+      // 教師はすでに管理画面がルートなので何もしない
       final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
       navigator.popUntil((route) => route.isFirst);
       return;
     }
-    // 学習者フロー（'教師'ショートカット等）→ 管理画面をモーダルで表示
+    // モバイル学習者フロー（'教師'ショートカット等）→ 管理画面をモーダルで表示
     final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
     navigator.push<void>(
       MaterialPageRoute<void>(
@@ -924,12 +933,61 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
       );
     }
 
-    // ロールに応じてUI分岐
+    // デスクトップ（Windows/macOS/Linux）は従来の3タブレイアウトを維持
+    if (isDesktop) {
+      return _buildDesktopRoot();
+    }
+
+    // モバイル（Android/iOS）: ロールに応じてUI分岐
     if (_role == 'learner' ||
         (_role == null && _loginGateMode == _LoginGateMode.learner)) {
       return _buildLearnerRoot();
     }
     return _buildTeacherRoot();
+  }
+
+  /// デスクトップ向け：従来の3タブ（学習/知識DB/教師用管理/スマホ幅）レイアウト
+  Widget _buildDesktopRoot() {
+    final pages = <Widget>[
+      _buildLearnerTab(),
+      KnowledgeDbHomePage(localDb: widget.localDb, localDatabase: widget.localDatabase),
+      _buildTeacherTab(),
+      _buildLearnerMobilePreviewTab(),
+    ];
+    return Scaffold(
+      body: Column(
+        children: [
+          if (_postLoginSubjectsCheck != null) _buildSubjectsCheckBanner(),
+          Expanded(child: pages[_index]),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _index,
+        onDestinationSelected: (i) => setState(() => _index = i),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.school_outlined),
+            selectedIcon: Icon(Icons.school),
+            label: '学習',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.menu_book_outlined),
+            selectedIcon: Icon(Icons.menu_book),
+            label: '知識DB',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.manage_search_outlined),
+            selectedIcon: Icon(Icons.manage_search),
+            label: '教師用管理',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.smartphone_outlined),
+            selectedIcon: Icon(Icons.smartphone),
+            label: 'スマホ幅',
+          ),
+        ],
+      ),
+    );
   }
 }
 
