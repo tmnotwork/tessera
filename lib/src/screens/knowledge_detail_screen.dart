@@ -20,7 +20,9 @@ import '../widgets/explanation_text.dart';
 import '../sync/english_example_state_sync.dart';
 import '../sync/sync_engine.dart';
 import '../utils/knowledge_learner_mem_status.dart';
+import 'english_example_list_screen.dart';
 import 'english_example_composition_screen.dart';
+import 'four_choice_create_screen.dart';
 import 'knowledge_edit_screen.dart';
 import 'question_solve_screen.dart';
 
@@ -211,7 +213,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
 
       final rows = await client
           .from('english_examples')
-          .select('id, knowledge_id, front_ja, back_en, explanation, supplement, display_order')
+          .select('id, knowledge_id, front_ja, back_en, explanation, supplement, prompt_supplement, display_order')
           .inFilter('knowledge_id', ctx.queryIds);
       final byKnowledge = <String, List<Map<String, dynamic>>>{
         for (final k in _allKnowledge) k.id: [],
@@ -620,6 +622,56 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
     }
   }
 
+  Future<void> _openCreateFourChoiceForCurrentKnowledge() async {
+    final k = _allKnowledge[_currentIndex];
+    final remoteMap = await _displayKnowledgeIdToSupabaseId();
+    final remoteKnowledgeId = remoteMap[k.id];
+    if (remoteKnowledgeId == null || remoteKnowledgeId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('この知識カードはまだ同期されていません。先に保存/同期してください。')),
+      );
+      return;
+    }
+    String? subjectId = k.subjectId;
+    if (subjectId != null && subjectId.startsWith('local_')) {
+      subjectId = null;
+    }
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (context) => FourChoiceCreateScreen(
+          initialSubjectId: subjectId,
+          initialKnowledgeId: remoteKnowledgeId,
+        ),
+      ),
+    );
+    if (mounted) await _loadLinkedQuestions();
+  }
+
+  Future<void> _openCreateEnglishExampleForCurrentKnowledge() async {
+    final k = _allKnowledge[_currentIndex];
+    final remoteMap = await _displayKnowledgeIdToSupabaseId();
+    final remoteKnowledgeId = remoteMap[k.id];
+    if (remoteKnowledgeId == null || remoteKnowledgeId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('この知識カードはまだ同期されていません。先に保存/同期してください。')),
+      );
+      return;
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => EnglishExampleListScreen(
+          initialCreateKnowledgeId: remoteKnowledgeId,
+        ),
+      ),
+    );
+    if (mounted) {
+      await _loadLinkedQuestions();
+      await _loadEnglishExamplesForLearner();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentKnowledge = _allKnowledge[_currentIndex];
@@ -803,6 +855,23 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
                   color: scheme.primary,
                 ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _saving ? null : () => unawaited(_openCreateFourChoiceForCurrentKnowledge()),
+                icon: const Icon(Icons.quiz_outlined),
+                label: const Text('四択問題を作成'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _saving ? null : () => unawaited(_openCreateEnglishExampleForCurrentKnowledge()),
+                icon: const Icon(Icons.edit_note_outlined),
+                label: const Text('英作文を作成'),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           TextField(

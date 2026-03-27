@@ -835,6 +835,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
     final ex = _current;
     final exp = ex.explanation?.trim();
     final sup = ex.supplement?.trim();
+    final promptSup = ex.promptSupplement?.trim();
 
     final disabledRating = _saving || (_ttsPlaying && _showRatingButtons);
 
@@ -907,6 +908,25 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
                           textAlign: TextAlign.left,
                         ),
                       ),
+                      if (promptSup != null && promptSup.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: theme.colorScheme.outlineVariant),
+                            borderRadius: BorderRadius.circular(8),
+                            color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.35),
+                          ),
+                          child: SelectableText(
+                            '出題用補足: $promptSup',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: theme.textTheme.bodyMedium?.color?.withOpacity(0.85),
+                            ),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 20),
                       if (_showAnswer) ...[
                         Divider(

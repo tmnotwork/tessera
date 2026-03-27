@@ -479,7 +479,7 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
       try {
         final rows = await client
             .from('english_examples')
-            .select('id, knowledge_id, front_ja, back_en, explanation, supplement, display_order')
+            .select('id, knowledge_id, front_ja, back_en, explanation, supplement, prompt_supplement, display_order')
             .inFilter('knowledge_id', ctx.queryIds);
         final byKnowledgeRows = <String, List<Map<String, dynamic>>>{
           for (final k in _items) k.id: [],

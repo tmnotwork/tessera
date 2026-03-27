@@ -97,7 +97,7 @@ class _EnglishExampleCompositionProgressScreenState
         final rows = await _client
             .from('english_examples')
             .select(
-              'id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, created_at, '
+              'id, knowledge_id, front_ja, back_en, explanation, supplement, prompt_supplement, display_order, created_at, '
               'knowledge:knowledge_id(id, content, unit, display_order, created_at)',
             )
             .order('display_order', ascending: true)

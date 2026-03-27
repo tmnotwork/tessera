@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -8,10 +8,19 @@ import '../sync/ensure_synced_for_local_read.dart';
 
 /// 四択問題の新規作成・編集画面
 class FourChoiceCreateScreen extends StatefulWidget {
-  const FourChoiceCreateScreen({super.key, this.questionId});
+  const FourChoiceCreateScreen({
+    super.key,
+    this.questionId,
+    this.initialSubjectId,
+    this.initialKnowledgeId,
+  });
 
   /// 指定時は編集モード（既存問題を読み込んで更新）
   final String? questionId;
+  /// 新規作成時に初期選択したい科目ID（任意）
+  final String? initialSubjectId;
+  /// 新規作成時に初期選択したい知識ID（任意）
+  final String? initialKnowledgeId;
 
   @override
   State<FourChoiceCreateScreen> createState() => _FourChoiceCreateScreenState();
@@ -69,7 +78,12 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
           _subjects = List<Map<String, dynamic>>.from(rows);
           _loadingSubjects = false;
           if (_subjects.isNotEmpty && _selectedSubjectId == null) {
-            _selectedSubjectId = _subjects.first['id']?.toString();
+            final preferred = widget.initialSubjectId;
+            final hasPreferred = preferred != null &&
+                _subjects.any((s) => s['id']?.toString() == preferred);
+            _selectedSubjectId = hasPreferred
+                ? preferred
+                : _subjects.first['id']?.toString();
             _loadKnowledge();
           }
         });
@@ -217,6 +231,12 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
         setState(() {
           _knowledgeList = List<Map<String, dynamic>>.from(rows);
           _loadingKnowledge = false;
+          final preferred = !_isEditMode ? widget.initialKnowledgeId : null;
+          if (_selectedKnowledgeId == null &&
+              preferred != null &&
+              _knowledgeList.any((k) => k['id']?.toString() == preferred)) {
+            _selectedKnowledgeId = preferred;
+          }
           final inList = _knowledgeList.any((k) => k['id']?.toString() == _selectedKnowledgeId);
           if (!inList) {
             _selectedKnowledgeId = _knowledgeList.isNotEmpty ? _knowledgeList.first['id']?.toString() : null;
@@ -380,10 +400,69 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
     }
   }
 
+  Future<void> _deleteQuestion() async {
+    final questionId = widget.questionId;
+    if (!_isEditMode || questionId == null || questionId.isEmpty) return;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('四択問題を削除'),
+        content: const Text('この問題を削除しますか？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('削除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _saving = true);
+    try {
+      final client = Supabase.instance.client;
+      try {
+        await client.from('question_choices').delete().eq('question_id', questionId);
+      } catch (_) {}
+      try {
+        await client.from('question_knowledge').delete().eq('question_id', questionId);
+      } catch (_) {}
+      await client.from('questions').delete().eq('id', questionId);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('四択問題を削除しました')),
+      );
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('削除エラー: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(_isEditMode ? '四択問題を編集' : '四択問題を作成')),
+      appBar: AppBar(
+        title: Text(_isEditMode ? '四択問題を編集' : '四択問題を作成'),
+        actions: [
+          if (_isEditMode)
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: '削除',
+              onPressed: _saving ? null : _deleteQuestion,
+            ),
+        ],
+      ),
       body: _loadingQuestion
           ? const Center(child: CircularProgressIndicator())
           : Form(

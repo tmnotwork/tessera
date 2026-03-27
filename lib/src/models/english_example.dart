@@ -7,6 +7,7 @@ class EnglishExample {
     required this.backEn,
     this.explanation,
     this.supplement,
+    this.promptSupplement,
   });
 
   final String id;
@@ -15,6 +16,7 @@ class EnglishExample {
   final String backEn;
   final String? explanation;
   final String? supplement;
+  final String? promptSupplement;
 
   factory EnglishExample.fromRow(Map<String, dynamic> row) {
     return EnglishExample(
@@ -24,6 +26,7 @@ class EnglishExample {
       backEn: row['back_en'] as String? ?? '',
       explanation: row['explanation'] as String?,
       supplement: row['supplement'] as String?,
+      promptSupplement: row['prompt_supplement'] as String?,
     );
   }
 }

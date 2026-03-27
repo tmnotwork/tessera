@@ -30,6 +30,7 @@ class EnglishExampleListScreen extends StatefulWidget {
     this.readAloudMenuOnly = false,
     this.compositionMenuOnly = false,
     this.initialEditExampleId,
+    this.initialCreateKnowledgeId,
   });
 
   final String? subjectId;
@@ -46,6 +47,8 @@ class EnglishExampleListScreen extends StatefulWidget {
 
   /// 指定時、初回ロード後に該当IDの編集ダイアログを自動表示する。
   final String? initialEditExampleId;
+  /// 指定時、初回ロード後に該当 knowledge を選択した追加ダイアログを自動表示する。
+  final String? initialCreateKnowledgeId;
 
   @override
   State<EnglishExampleListScreen> createState() =>
@@ -69,6 +72,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   String? _error;
   bool _showManageEdit = false;
   bool _didOpenInitialEdit = false;
+  bool _didOpenInitialCreate = false;
 
   _StudyFilter _studyFilter = _StudyFilter.dueToday;
 
@@ -118,6 +122,18 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
     });
   }
 
+  void _tryOpenInitialCreateOnce() {
+    if (_didOpenInitialCreate) return;
+    final knowledgeId = widget.initialCreateKnowledgeId?.trim();
+    if (knowledgeId == null || knowledgeId.isEmpty) return;
+    _didOpenInitialCreate = true;
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_openEditor(presetKnowledgeId: knowledgeId));
+    });
+  }
+
   void _openManageEnglishExamples() {
     final cb = openManageNotifier.openManageEnglishExamples;
     if (cb != null) {
@@ -164,7 +180,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
             ? await _client
                   .from('english_examples')
                   .select(
-                    'id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, '
+                    'id, knowledge_id, front_ja, back_en, explanation, supplement, prompt_supplement, display_order, '
                     'knowledge:knowledge_id(id, content, unit, display_order, created_at)',
                   )
                   .order('display_order', ascending: true)
@@ -172,7 +188,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
             : await _client
                   .from('english_examples')
                   .select(
-                    'id, knowledge_id, front_ja, back_en, explanation, supplement, display_order, '
+                    'id, knowledge_id, front_ja, back_en, explanation, supplement, prompt_supplement, display_order, '
                     'knowledge:knowledge_id(id, content, unit, display_order, created_at)',
                   )
                   .eq('knowledge.subject_id', widget.subjectId!)
@@ -224,6 +240,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
         _compositionStates = compositionStates;
       });
       _tryOpenInitialEditOnce();
+      _tryOpenInitialCreateOnce();
       if (widget.isLearnerMode) {
         unawaited(_refreshManageShortcut());
       }
@@ -499,7 +516,10 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
     return '$unit / $content';
   }
 
-  Future<void> _openEditor({Map<String, dynamic>? current}) async {
+  Future<void> _openEditor({
+    Map<String, dynamic>? current,
+    String? presetKnowledgeId,
+  }) async {
     final messenger = ScaffoldMessenger.of(context);
     final candidates = List<Map<String, dynamic>>.from(_knowledgeRows);
 
@@ -526,14 +546,18 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
     final supplementController = TextEditingController(
       text: current?['supplement']?.toString() ?? '',
     );
+    final promptSupplementController = TextEditingController(
+      text: current?['prompt_supplement']?.toString() ?? '',
+    );
     final orderController = TextEditingController(
       text: current?['display_order']?.toString() ?? '',
     );
     String? selectedKnowledgeId =
         current?['knowledge_id']?.toString() ??
+        presetKnowledgeId ??
         (candidates.isNotEmpty ? candidates.first['id']?.toString() : null);
 
-    final saved = await showDialog<bool>(
+    final action = await showDialog<String>(
       context: context,
       builder: (ctx) {
         return AlertDialog(
@@ -610,6 +634,17 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
                       ),
                       const SizedBox(height: 12),
                       TextField(
+                        controller: promptSupplementController,
+                        minLines: 1,
+                        maxLines: 4,
+                        decoration: const InputDecoration(
+                          labelText: '出題用補足',
+                          hintText: '例: 仮定法過去を使って',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
                         controller: orderController,
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(
@@ -624,12 +659,17 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
             },
           ),
           actions: [
+            if (current != null)
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop('delete'),
+                child: const Text('削除'),
+              ),
             TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
+              onPressed: () => Navigator.of(ctx).pop('cancel'),
               child: const Text('キャンセル'),
             ),
             FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
+              onPressed: () => Navigator.of(ctx).pop('save'),
               child: const Text('保存'),
             ),
           ],
@@ -637,12 +677,32 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       },
     );
 
-    if (saved != true || !mounted) return;
+    if (!mounted || action == null || action == 'cancel') {
+      frontController.dispose();
+      backController.dispose();
+      explanationController.dispose();
+      supplementController.dispose();
+      promptSupplementController.dispose();
+      orderController.dispose();
+      return;
+    }
+
+    if (action == 'delete' && current != null) {
+      frontController.dispose();
+      backController.dispose();
+      explanationController.dispose();
+      supplementController.dispose();
+      promptSupplementController.dispose();
+      orderController.dispose();
+      await _delete(current);
+      return;
+    }
 
     final frontJa = frontController.text.trim();
     final backEn = backController.text.trim();
     final explanation = explanationController.text.trim();
     final supplement = supplementController.text.trim();
+    final promptSupplement = promptSupplementController.text.trim();
     final displayOrder = int.tryParse(orderController.text.trim());
     final knowledgeId = selectedKnowledgeId;
 
@@ -650,6 +710,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
     backController.dispose();
     explanationController.dispose();
     supplementController.dispose();
+    promptSupplementController.dispose();
     orderController.dispose();
 
     if (knowledgeId == null || frontJa.isEmpty || backEn.isEmpty) {
@@ -666,6 +727,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
         'back_en': backEn,
         'explanation': explanation.isEmpty ? null : explanation,
         'supplement': supplement.isEmpty ? null : supplement,
+        'prompt_supplement': promptSupplement.isEmpty ? null : promptSupplement,
         'display_order': displayOrder,
       };
       if (current == null) {
