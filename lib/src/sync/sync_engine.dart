@@ -122,6 +122,8 @@ class SyncEngine {
     required int selectedIndex,
     required String selectedChoiceText,
     required bool isCorrect,
+    /// 正解のあと「曖昧だった」で不正解に訂正するとき true。[reviewed_count] を増やさない。
+    bool retainReviewedCount = false,
   }) async {
     if (kIsWeb) return false;
 
@@ -184,13 +186,16 @@ class SyncEngine {
       retrievability = 0.35;
     }
 
+    final newReviewedCount =
+        (!isCorrect && retainReviewedCount) ? prevReviewed : prevReviewed + 1;
+
     final payload = <String, dynamic>{
       'stability': stability,
       'difficulty': isCorrect ? 0.45 : 0.7,
       'retrievability': retrievability,
       'success_streak': successStreak,
       'lapse_count': lapseCount,
-      'reviewed_count': prevReviewed + 1,
+      'reviewed_count': newReviewedCount,
       'last_is_correct': isCorrect ? 1 : 0,
       'last_selected_choice_text': selectedChoiceText,
       'last_selected_index': selectedIndex,

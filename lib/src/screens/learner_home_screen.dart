@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -13,6 +13,7 @@ import '../widgets/force_sync_icon_button.dart';
 import 'english_example_list_screen.dart';
 import 'learner_learning_status_menu_screen.dart';
 import 'knowledge_list_screen.dart';
+import 'review_mode_screen.dart';
 import 'question_solve_screen.dart';
 import 'settings_screen.dart';
 
@@ -149,6 +150,14 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
     );
   }
 
+  void _openReviewMode() {
+    _learnerPush(
+      MaterialPageRoute<void>(
+        builder: (context) => const ReviewModeScreen(),
+      ),
+    );
+  }
+
   void _openLearningStatusMenu() {
     _learnerPush(
       MaterialPageRoute(
@@ -246,6 +255,13 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
                   title: '四択問題を解く',
                   subtitle: '四択クイズに挑戦する',
                   onTap: _openFourChoiceSolve,
+                ),
+                const SizedBox(height: 12),
+                _MenuCard(
+                  icon: Icons.replay,
+                  title: '復習モード',
+                  subtitle: '不正解の四択・例文読み上げ・英作文をまとめて復習',
+                  onTap: _openReviewMode,
                 ),
                 const SizedBox(height: 12),
                 _MenuCard(

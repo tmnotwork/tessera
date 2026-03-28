@@ -13,6 +13,7 @@ import '../utils/english_example_review_filter.dart';
 import 'english_example_composition_chapter_list_screen.dart';
 import 'english_example_composition_progress_screen.dart';
 import 'english_example_composition_screen.dart';
+import 'english_example_edit_screen.dart';
 import 'english_example_solve_screen.dart';
 
 /// 出題モードの種類
@@ -509,13 +510,6 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   // 教師向け編集・削除
   // ──────────────────────────────
 
-  String _knowledgeLabel(Map<String, dynamic> row) {
-    final unit = row['unit']?.toString();
-    final content = row['content']?.toString() ?? '';
-    if (unit == null || unit.isEmpty) return content;
-    return '$unit / $content';
-  }
-
   Future<void> _openEditor({
     Map<String, dynamic>? current,
     String? presetKnowledgeId,
@@ -534,231 +528,59 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
       return;
     }
 
-    final frontController = TextEditingController(
-      text: current?['front_ja']?.toString() ?? '',
-    );
-    final backController = TextEditingController(
-      text: current?['back_en']?.toString() ?? '',
-    );
-    final explanationController = TextEditingController(
-      text: current?['explanation']?.toString() ?? '',
-    );
-    final supplementController = TextEditingController(
-      text: current?['supplement']?.toString() ?? '',
-    );
-    final promptSupplementController = TextEditingController(
-      text: current?['prompt_supplement']?.toString() ?? '',
-    );
-    final orderController = TextEditingController(
-      text: current?['display_order']?.toString() ?? '',
-    );
-    String? selectedKnowledgeId =
-        current?['knowledge_id']?.toString() ??
-        presetKnowledgeId ??
-        (candidates.isNotEmpty ? candidates.first['id']?.toString() : null);
-
-    final action = await showDialog<String>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: Text(current == null ? '英語例文を追加' : '英語例文を編集'),
-          content: StatefulBuilder(
-            builder: (ctx, setLocalState) {
-              return SizedBox(
-                width: 640,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      DropdownButtonFormField<String>(
-                        initialValue: selectedKnowledgeId,
-                        decoration: const InputDecoration(
-                          labelText: '対応する知識',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: candidates
-                            .map(
-                              (k) => DropdownMenuItem<String>(
-                                value: k['id'].toString(),
-                                child: Text(
-                                  _knowledgeLabel(k),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (v) =>
-                            setLocalState(() => selectedKnowledgeId = v),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: frontController,
-                        minLines: 2,
-                        maxLines: 5,
-                        decoration: const InputDecoration(
-                          labelText: '表（日本語）',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: backController,
-                        minLines: 2,
-                        maxLines: 5,
-                        decoration: const InputDecoration(
-                          labelText: '裏（英語）',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: explanationController,
-                        minLines: 2,
-                        maxLines: 6,
-                        decoration: const InputDecoration(
-                          labelText: '解説',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: supplementController,
-                        minLines: 1,
-                        maxLines: 4,
-                        decoration: const InputDecoration(
-                          labelText: '補足',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: promptSupplementController,
-                        minLines: 1,
-                        maxLines: 4,
-                        decoration: const InputDecoration(
-                          labelText: '出題用補足',
-                          hintText: '例: 仮定法過去を使って',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: orderController,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: '表示順（任意）',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-          actions: [
-            if (current != null)
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop('delete'),
-                child: const Text('削除'),
-              ),
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop('cancel'),
-              child: const Text('キャンセル'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop('save'),
-              child: const Text('保存'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (!mounted || action == null || action == 'cancel') {
-      frontController.dispose();
-      backController.dispose();
-      explanationController.dispose();
-      supplementController.dispose();
-      promptSupplementController.dispose();
-      orderController.dispose();
-      return;
-    }
-
-    if (action == 'delete' && current != null) {
-      frontController.dispose();
-      backController.dispose();
-      explanationController.dispose();
-      supplementController.dispose();
-      promptSupplementController.dispose();
-      orderController.dispose();
-      await _delete(current);
-      return;
-    }
-
-    final frontJa = frontController.text.trim();
-    final backEn = backController.text.trim();
-    final explanation = explanationController.text.trim();
-    final supplement = supplementController.text.trim();
-    final promptSupplement = promptSupplementController.text.trim();
-    final displayOrder = int.tryParse(orderController.text.trim());
-    final knowledgeId = selectedKnowledgeId;
-
-    frontController.dispose();
-    backController.dispose();
-    explanationController.dispose();
-    supplementController.dispose();
-    promptSupplementController.dispose();
-    orderController.dispose();
-
-    if (knowledgeId == null || frontJa.isEmpty || backEn.isEmpty) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('「対応する知識」「表（日本語）」「裏（英語）」は必須です。')),
-      );
-      return;
-    }
-
-    try {
-      final payload = <String, dynamic>{
-        'knowledge_id': knowledgeId,
-        'front_ja': frontJa,
-        'back_en': backEn,
-        'explanation': explanation.isEmpty ? null : explanation,
-        'supplement': supplement.isEmpty ? null : supplement,
-        'prompt_supplement': promptSupplement.isEmpty ? null : promptSupplement,
-        'display_order': displayOrder,
-      };
-      if (current == null) {
-        await _client.from('english_examples').insert(payload);
-      } else {
-        await _client
-            .from('english_examples')
-            .update(payload)
-            .eq('id', current['id']);
-      }
-      if (!mounted) return;
-      await _load();
-      messenger.showSnackBar(
-        SnackBar(content: Text(current == null ? '追加しました' : '保存しました')),
-      );
-    } on PostgrestException catch (e) {
-      if (!mounted) return;
-      final missingTable =
-          e.code == 'PGRST205' && e.message.contains('public.english_examples');
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            missingTable
-                ? '英語例文DBのテーブルが未作成です。migration 00016 を適用してください。'
-                : '保存に失敗しました: $e',
-          ),
+    final outcome = await Navigator.of(context).push<EnglishExampleEditOutcome>(
+      MaterialPageRoute<EnglishExampleEditOutcome>(
+        builder: (ctx) => EnglishExampleEditScreen(
+          knowledgeCandidates: candidates,
+          current: current,
+          presetKnowledgeId: presetKnowledgeId,
         ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      messenger.showSnackBar(SnackBar(content: Text('保存に失敗しました: $e')));
+      ),
+    );
+
+    if (!mounted || outcome == null) return;
+
+    switch (outcome.action) {
+      case EnglishExampleEditAction.cancel:
+        return;
+      case EnglishExampleEditAction.delete:
+        if (current != null) await _delete(current);
+        return;
+      case EnglishExampleEditAction.save:
+        final payload = outcome.savePayload;
+        if (payload == null) return;
+        try {
+          if (current == null) {
+            await _client.from('english_examples').insert(payload);
+          } else {
+            await _client
+                .from('english_examples')
+                .update(payload)
+                .eq('id', current['id']);
+          }
+          if (!mounted) return;
+          await _load();
+          messenger.showSnackBar(
+            SnackBar(content: Text(current == null ? '追加しました' : '保存しました')),
+          );
+        } on PostgrestException catch (e) {
+          if (!mounted) return;
+          final missingTable =
+              e.code == 'PGRST205' &&
+              e.message.contains('public.english_examples');
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text(
+                missingTable
+                    ? '英語例文DBのテーブルが未作成です。migration 00016 を適用してください。'
+                    : '保存に失敗しました: $e',
+              ),
+            ),
+          );
+        } catch (e) {
+          if (!mounted) return;
+          messenger.showSnackBar(SnackBar(content: Text('保存に失敗しました: $e')));
+        }
     }
   }
 

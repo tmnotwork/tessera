@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -34,6 +34,7 @@ class QuestionSolveScreen extends StatefulWidget {
 
 class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
   static const String _dontKnowChoiceText = 'わからない';
+  static const String _ambiguousChoiceText = '曖昧だった';
 
   int _index = 0;
   Map<String, dynamic>? _question;
@@ -43,6 +44,8 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
   String? _error;
   int? _selectedIndex;
   bool _answered = false;
+  /// 正解後に「曖昧だった」で不正解へ訂正した（UI 用）
+  bool _ambiguousRevoked = false;
   Future<void>? _pendingSave;
   bool _showManageEdit = false;
 
@@ -119,6 +122,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
       _linkedKnowledge = [];
       _selectedIndex = null;
       _answered = false;
+      _ambiguousRevoked = false;
     });
     try {
       await triggerBackgroundSyncWithThrottle();
@@ -247,6 +251,29 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
     );
   }
 
+  /// 正解として保存したあと、不正解に訂正する（同一試行の [reviewed_count] は増やさない）。
+  Future<void> _onMarkAmbiguousIncorrect() async {
+    if (!_answered || _ambiguousRevoked || _question == null) return;
+    final choices = _currentChoices;
+    final correctText = _question!['correct_answer']?.toString() ?? '';
+    final idx = _selectedIndex;
+    if (idx == null || idx < 0 || idx >= choices.length) return;
+    if (choices[idx] != correctText) return;
+
+    await _waitPendingSave();
+    if (!mounted) return;
+
+    setState(() => _ambiguousRevoked = true);
+
+    final extraIndex = choices.length + 1;
+    _pendingSave = _recordLearningProgress(
+      selectedIndex: extraIndex,
+      selectedChoiceText: _ambiguousChoiceText,
+      isCorrect: false,
+      retainReviewedCount: true,
+    );
+  }
+
   Future<void> _waitPendingSave() async {
     final f = _pendingSave;
     if (f == null) return;
@@ -263,6 +290,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
     required int selectedIndex,
     required String selectedChoiceText,
     required bool isCorrect,
+    bool retainReviewedCount = false,
   }) async {
     final questionId = _question?['id']?.toString();
     if (questionId == null || questionId.isEmpty) return;
@@ -280,6 +308,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
           selectedIndex: selectedIndex,
           selectedChoiceText: selectedChoiceText,
           isCorrect: isCorrect,
+          retainReviewedCount: retainReviewedCount,
         );
         if (recorded) usedLocalSync = true;
       } catch (_) {
@@ -340,6 +369,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
               isCorrect: isCorrect,
               now: now,
               nowIso: nowIso,
+              retainReviewedCount: retainReviewedCount,
             );
           }
         } else {
@@ -352,6 +382,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
             isCorrect: isCorrect,
             now: now,
             nowIso: nowIso,
+            retainReviewedCount: retainReviewedCount,
           );
         }
       } else {
@@ -364,6 +395,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
           isCorrect: isCorrect,
           now: now,
           nowIso: nowIso,
+          retainReviewedCount: retainReviewedCount,
         );
       }
     } catch (e, st) {
@@ -399,6 +431,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
     required bool isCorrect,
     required DateTime now,
     required String nowIso,
+    bool retainReviewedCount = false,
   }) async {
     Map<String, dynamic>? currentState;
     try {
@@ -448,6 +481,9 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
       retrievability = 0.35;
     }
 
+    final newReviewedCount =
+        (!isCorrect && retainReviewedCount) ? prevReviewed : prevReviewed + 1;
+
     final remoteId = await QuestionLearningStateRemote.upsertState(
       client: client,
       learnerId: learnerId,
@@ -459,7 +495,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
         'retrievability': retrievability,
         'success_streak': successStreak,
         'lapse_count': lapseCount,
-        'reviewed_count': prevReviewed + 1,
+        'reviewed_count': newReviewedCount,
         'last_is_correct': isCorrect,
         'last_selected_choice_text': selectedChoiceText,
         'last_selected_index': selectedIndex,
@@ -666,6 +702,13 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                   final width = constraints.maxWidth;
                   final isWide = width >= breakpointWide;
                   final choiceCount = choices.length;
+                  final correctAnswerText =
+                      _question!['correct_answer']?.toString() ?? '';
+                  final answeredCorrectly = _answered &&
+                      _selectedIndex != null &&
+                      _selectedIndex! >= 0 &&
+                      _selectedIndex! < choiceCount &&
+                      choices[_selectedIndex!] == correctAnswerText;
                   final useTwoRows =
                       isWide && choiceCount == 4 && (width - 3 * spacing) / 4 < minChoiceWidth;
                   final colorScheme = Theme.of(context).colorScheme;
@@ -681,8 +724,8 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                     required bool isWrongSelection,
                   }) {
                     if (!_answered) return null;
-                    if (isCorrectChoice) return correctBg;
                     if (isWrongSelection) return wrongBg;
+                    if (isCorrectChoice) return correctBg;
                     return null;
                   }
 
@@ -692,15 +735,15 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                   }) {
                     final base = Theme.of(context).textTheme.bodyLarge;
                     if (!_answered) return base ?? const TextStyle();
-                    if (isCorrectChoice) {
-                      return (base ?? const TextStyle()).copyWith(
-                        color: correctFg,
-                        fontWeight: FontWeight.w600,
-                      );
-                    }
                     if (isWrongSelection) {
                       return (base ?? const TextStyle()).copyWith(
                         color: wrongFg,
+                        fontWeight: FontWeight.w600,
+                      );
+                    }
+                    if (isCorrectChoice) {
+                      return (base ?? const TextStyle()).copyWith(
+                        color: correctFg,
                         fontWeight: FontWeight.w600,
                       );
                     }
@@ -712,14 +755,16 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                   /// スクロール内では縦制約が無限になり得るため、SizedBox.expand + Row.stretch は使わない（レイアウトが壊れる）
                   Widget choiceCard(int i, String text) {
                     final selected = _selectedIndex == i;
-                    final correct = _question!['correct_answer']?.toString() == text;
+                    final correct = correctAnswerText == text;
+                    final wrongPick =
+                        selected && (!correct || (_ambiguousRevoked && correct));
                     final bg = choiceBackground(
                       isCorrectChoice: correct,
-                      isWrongSelection: selected && !correct,
+                      isWrongSelection: wrongPick,
                     );
                     final style = choiceTextStyle(
                       isCorrectChoice: correct,
-                      isWrongSelection: selected && !correct,
+                      isWrongSelection: wrongPick,
                     );
                     final prefixStyle = Theme.of(context).textTheme.bodyLarge?.copyWith(
                           fontWeight: FontWeight.bold,
@@ -761,9 +806,12 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
-                                if (_answered && correct)
+                                if (_answered &&
+                                    correct &&
+                                    !(selected && _ambiguousRevoked))
                                   Icon(Icons.check_circle, color: correctFg, size: 22),
-                                if (_answered && selected && !correct)
+                                if (_answered && selected &&
+                                    (!correct || _ambiguousRevoked))
                                   Icon(Icons.cancel, color: wrongFg, size: 22),
                               ],
                             ),
@@ -823,9 +871,69 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                     );
                   }
 
+                  Widget ambiguousCard() {
+                    return SizedBox(
+                      width: double.infinity,
+                      child: Material(
+                        color: colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(12),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(
+                            color: colorScheme.outlineVariant,
+                            width: 1,
+                          ),
+                        ),
+                        child: InkWell(
+                          onTap: _onMarkAmbiguousIncorrect,
+                          borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Icon(Icons.blur_on,
+                                    size: 22, color: colorScheme.onSurfaceVariant),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    _ambiguousChoiceText,
+                                    style: Theme.of(context).textTheme.bodyLarge,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
+                  Widget bottomExtraRow() {
+                    if (!_answered) {
+                      return dontKnowCard();
+                    }
+                    if (answeredCorrectly && !_ambiguousRevoked) {
+                      return ambiguousCard();
+                    }
+                    if (answeredCorrectly && _ambiguousRevoked) {
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          '不正解として記録しました',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  }
+
                   final belowChoices = Padding(
                     padding: const EdgeInsets.only(top: 12),
-                    child: dontKnowCard(),
+                    child: bottomExtraRow(),
                   );
 
                   if (!isWide) {
@@ -837,7 +945,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                             padding: const EdgeInsets.only(bottom: 12),
                             child: choiceCard(i, choices[i]),
                           ),
-                        dontKnowCard(),
+                        bottomExtraRow(),
                       ],
                     );
                   }
@@ -894,7 +1002,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                           padding: const EdgeInsets.only(bottom: 12),
                           child: choiceCard(i, choices[i]),
                         ),
-                      dontKnowCard(),
+                      bottomExtraRow(),
                     ],
                   );
                 },

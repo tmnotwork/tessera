@@ -588,13 +588,7 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
       });
       return;
     }
-    if (_role == 'teacher') {
-      // 教師はすでに管理画面がルートなので何もしない
-      final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
-      navigator.popUntil((route) => route.isFirst);
-      return;
-    }
-    // モバイル学習者フロー（'教師'ショートカット等）→ 管理画面をモーダルで表示
+    // モバイルは学習者シェルがルート。教師・学習者とも管理はモーダルで開く
     final navigator = Navigator.maybeOf(context, rootNavigator: true) ?? Navigator.of(context);
     navigator.push<void>(
       MaterialPageRoute<void>(
@@ -668,110 +662,6 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
             label: '読み上げ',
           ),
         ],
-      ),
-    );
-  }
-
-  /// 教師向け：管理画面（ロール確認付き）
-  Widget _buildTeacherRoot() {
-    if (_role == 'teacher') {
-      final teacherEmail = appAuthNotifier.currentUser?.email ?? '';
-      return Scaffold(
-        body: Column(
-          children: [
-            if (_postLoginSubjectsCheck != null) _buildSubjectsCheckBanner(),
-            if (teacherEmail.isNotEmpty)
-              Material(
-                color: Theme.of(context).colorScheme.surfaceContainerHigh,
-                child: SafeArea(
-                  bottom: false,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    child: Row(
-                      children: [
-                        Icon(Icons.person_outline,
-                            size: 16,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant),
-                        const SizedBox(width: 6),
-                        Text(
-                          '教師ID: $teacherEmail',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            Expanded(
-              child: TeacherAdminPage(
-                localDb: widget.localDb,
-                localDatabase: widget.localDatabase,
-                onRefreshAuthAndRetry: () async {
-                  appAuthNotifier.clearRoleCache();
-                  await _refreshRole();
-                  if (mounted) setState(() {});
-                },
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-    // role == null（取得中 or 失敗）
-    if (_role == null && !_teacherTabRoleRetried) {
-      _teacherTabRoleRetried = true;
-      appAuthNotifier.clearRoleCache();
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        await _refreshRole();
-        if (mounted) setState(() {});
-      });
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    // teacher 権限なし
-    return Scaffold(
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.lock_outline,
-                  size: 48, color: Theme.of(context).colorScheme.outline),
-              const SizedBox(height: 16),
-              const Text('このアカウントには教材管理の権限がありません'),
-              const SizedBox(height: 8),
-              Text(
-                '権限があるはずの場合は「再読み込み」を試すか、設定からログアウトして再度ログインしてください。',
-                style: Theme.of(context).textTheme.bodySmall,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 24),
-              FilledButton.icon(
-                icon: const Icon(Icons.refresh),
-                label: const Text('再読み込み'),
-                onPressed: () async {
-                  appAuthNotifier.clearRoleCache();
-                  await _refreshRole();
-                  if (mounted) setState(() {});
-                },
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.settings_outlined),
-                label: const Text('設定'),
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (context) => const SettingsScreen(),
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -965,12 +855,8 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
       return _buildDesktopRoot();
     }
 
-    // モバイル（Android/iOS）: ロールに応じてUI分岐
-    if (_role == 'learner' ||
-        (_role == null && _loginGateMode == _LoginGateMode.learner)) {
-      return _buildLearnerRoot();
-    }
-    return _buildTeacherRoot();
+    // モバイル（Android/iOS）: 教師・学習者とも常に 5 タブ＋ボトムナビ（管理はショートカット等からモーダル）
+    return _buildLearnerRoot();
   }
 
   /// デスクトップ向け：従来の3タブ（学習/知識DB/教師用管理/スマホ幅）レイアウト

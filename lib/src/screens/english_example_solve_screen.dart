@@ -919,7 +919,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
                             color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.35),
                           ),
                           child: SelectableText(
-                            '出題用補足: $promptSup',
+                            'ヒント: $promptSup',
                             style: TextStyle(
                               fontSize: 14,
                               color: theme.textTheme.bodyMedium?.color?.withOpacity(0.85),

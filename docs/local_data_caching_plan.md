@@ -29,7 +29,7 @@
 ### フェーズ定義
 
 ```
-フェーズ1: ローカルキャッシュから即時表示（0ms〜）
+フェーズ1: ローカルキャッシュから即時表示（ネットワーク往復を待たず、体感上一瞬）
   ↓
 フェーズ2: バックグラウンドで最新データを取得（非同期、オンライン時のみ）
   ↓
@@ -45,6 +45,8 @@
 ### コンテンツデータ（問題・知識・例文）
 
 読み取り専用（学習者は編集しない）。多少古くてもよい。SWRパターンをそのまま適用する。
+
+教師側で問題を削除・非公開にした場合、Pull 同期でローカルへ論理削除や非表示フラグが反映される前提とする。反映までの間は古いキャッシュが残り得るため、表示時に「存在しない／利用不可」の扱いを決めておく（同期後にリストから消える、エラー表示に切り替える、など）。初期対応では既存の同期スキーマに合わせ、必要なら tombstone や `deleted_at` の伝播を `SyncEngine` 側で補強する。
 
 ### SM-2学習状態データ（`question_learning_states` / `english_example_learning_states`）
 
@@ -62,7 +64,9 @@ Supabaseへ Push
 dirty=0、synced_at を記録
 ```
 
-**競合解消**: `updated_at` による LWW（Last-Write-Wins）。`dirty=1` のローカルレコードは必ずリモートより新しい（ローカルで操作した直後のため）。
+**競合解消**: `updated_at` による LWW（Last-Write-Wins）。`dirty=1` のローカルレコードは、当該デバイス上では直近の解答を表すため、**そのデバイスから見た最新**として扱う。
+
+**LWW の限界**: 端末時計のずれや同一秒内の操作では「新しい方」の判定が曖昧になり得る。可能ならサーバー側の更新時刻やリビジョンに寄せる余地はあるが、現状は `SyncEngine` の実装に従い、極端なずれは運用上稀として許容する。
 
 ---
 
@@ -120,7 +124,9 @@ class _CacheEntry {
 }
 ```
 
-**Webのオフライン書き込み（SM-2）**: 解答操作時にネットワークが切れていた場合、インメモリの「保留キュー」に積み、オンライン復帰を `connectivity_plus` で検知してフラッシュする。
+**Webのオフライン書き込み（SM-2）**: 解答操作時に送信できなかった場合、インメモリの「保留キュー」に積む。`connectivity_plus` で**接続の復帰**を検知したらフラッシュを試みる。
+
+**接続オンラインと API 成功の区別**: Wi‑Fi に繋がっていても Supabase が 5xx やタイムアウトになることがある。フラッシュは **upsert が成功するまでキューに残す**（失敗時は再試行。指数バックオフや最大リトライ回数を設けると安全）。「オンラインになった」だけでキューを捨てない。
 
 ```dart
 // 保留キューの概念
@@ -129,7 +135,7 @@ class WebPendingQueue {
 
   void enqueue(_PendingWrite write) { ... }
 
-  // connectivity_plus でオンライン復帰を検知して呼ぶ
+  // 接続復帰時・定期タイマーなどから呼ぶ。成功するまで dequeue しない
   Future<void> flush(SupabaseClient client) async { ... }
 }
 ```
@@ -165,6 +171,8 @@ Future<void> _loadData() async {
     if ((_data == null || _data!.isEmpty) && mounted) {
       setState(() => _error = e.toString());
     }
+    // キャッシュありで長期オフライン／API失敗が続く場合、
+    // 「最新ではない」ことを示すかはプロダクト判断（例: ForceSyncIconButton の状態、軽いバナー）
   }
 }
 ```
@@ -201,6 +209,7 @@ void _syncToRemoteInBackground(LearningState state) {
 2. **バックグラウンド同期の失敗はサイレント処理**。`dirty=1` が残るため次回同期で補完される。
 3. **差分チェックを入れる** ことで不要な再レンダリングを避ける。
 4. **`mounted` チェックを必ず行う** ことで画面離脱後の `setState` を防ぐ。
+5. **読み取りのフェーズ2が続けて失敗する場合**、ローカル表示は維持しつつ、「最終同期から時間が経っている」などをユーザーに示すかは任意。既存の `ForceSyncIconButton` で同期の手動トリガーを提供する方針と相性がよい。
 
 ---
 
@@ -212,15 +221,15 @@ void _syncToRemoteInBackground(LearningState state) {
 |---|---|---|
 | 学習ホーム | `learner_home_screen.dart` | サブジェクト取得をSQLite読み取り＋バックグラウンド同期に変更 |
 | 四択問題 | `question_solve_screen.dart` | 問題・SM-2状態の読み書きをローカルファーストに変更 |
-| 例文練習 | `english_example_solve_screen.dart` | `_statesCache` 既存実装を活かしつつローカルDBへ永続化 |
+| 例文練習 | `english_example_solve_screen.dart` | `_statesCache` を活かしつつモバイルでは SQLite へ永続化。四択と同様に `english_example_learning_states` が `LocalTable`／`SyncEngine` の dirty パスで扱えるか実装前に確認し、足りなければ四択側と揃える |
 
 ### 優先度：中
 
 | 画面 | ファイル | 対応内容 |
 |---|---|---|
-| 四択進捗 | `four_choice_progress_screen.dart` | `question_learning_states` をSQLiteから集計 |
-| 例文進捗 | `english_example_progress_screen.dart` | 同上（例文版） |
-| 学習状況メニュー | `learner_learning_status_menu_screen.dart` | サブジェクト統計をローカル集計に変更 |
+| 四択進捗 | `four_choice_progress_screen.dart` | モバイル・デスクトップ: `question_learning_states` を SQLite から集計。**Web**: SQLite がないため、`kIsWeb` でインメモリキャッシュの集計か Supabase 直接取得に分岐（本ドキュメントの Web 節とセットで設計する） |
+| 例文進捗 | `english_example_progress_screen.dart` | 同上（例文版。状態テーブル名のみ異なる） |
+| 学習状況メニュー | `learner_learning_status_menu_screen.dart` | モバイル・デスクトップはローカル集計。**Web** は同上の分岐 |
 
 ---
 
@@ -232,7 +241,7 @@ void _syncToRemoteInBackground(LearningState state) {
 
 ### 解消ルール
 
-`updated_at` によるLWW（Last-Write-Wins）。新しい方が正しい。
+`updated_at` による LWW（Last-Write-Wins）。新しい方が正しい。端末時計のずれや同一秒内の衝突は、データ種別の「競合解消」で述べた限界と同様に扱う。
 
 ```
 デバイスA: 09:00 に解答 → dirty=1, updated_at=09:00
@@ -248,25 +257,31 @@ Pull時: Supabase から 09:05 の状態が A にも反映される
 
 現在 `EnglishExampleLearningStateRemote.upsertState()` は `reviewed_count` をリモートの値ベースで加算している（二重カウント防止）。ローカルファースト化後は**ローカルの値を正とする**。Push時にローカルの `reviewed_count` をそのまま送り、リモートを上書きする。
 
+`SyncEngine` 内でも `reviewed_count` を扱っているため、変更時は **Remote の upsert と Engine の Push／Pull の両方**でローカル正の前提が崩れていないか確認する。
+
 ---
 
 ## 実装ステップ（推奨順序）
 
 ### Step 1: バックグラウンド同期トリガーの共通化
 
-`ensureSyncedForLocalRead()` をそのまま置き換えず、「ローカル読み取り用」のヘルパーとして新規作成する。
+`ensureSyncedForLocalRead()` を**廃止せず**残す。用途を分ける。
+
+- **ローカルに中身が既にある画面**: `triggerBackgroundSync()` のみ（同期完了を待たない）。
+- **初回起動・ログイン直後・対象テーブルが空**など、ローカル読みで表示できない場合: 従来どおり **`await ensureSyncedForLocalRead()` を一度走らせる**、または初回セットアップ専用フローでフル同期を完了させてから以降はバックグラウンドのみ、のどちらかに実装で統一する。
 
 ```dart
-// lib/src/sync/read_local_with_background_sync.dart
+// lib/src/sync/read_local_with_background_sync.dart（想定パス）
 
-/// ローカルDBを読める状態であることを前提とし、
-/// バックグラウンドで同期を走らせる。同期完了を待たない。
+/// ローカルに表示可能なデータがある前提で、バックグラウンド同期だけ起動する。
 void triggerBackgroundSync() {
   if (SyncEngine.isInitialized) {
     unawaited(SyncEngine.instance.syncIfOnline());
   }
 }
 ```
+
+空の SQLite に対して `triggerBackgroundSync()` だけでは、ユーザーが待たずに中身が増えるまで表示が空のままになり得る点に注意する。
 
 ### Step 2: `learner_home_screen.dart` のサブジェクト取得を改修
 
@@ -285,7 +300,7 @@ SM-2状態は `LocalTable.questionLearningStates` から読む。
 
 ### Step 5: 進捗・統計画面の改修
 
-閲覧のみで書き込みがないため、SWRが最も安全に適用できる。
+閲覧のみで書き込みがないため、SWRが最も安全に適用できる。モバイル・デスクトップは SQLite 集計に寄せ、**Web は Step 4 のインメモリキャッシュまたは Supabase 直読みと整合させる**（優先度：中の表を参照）。
 
 ---
 
@@ -293,7 +308,12 @@ SM-2状態は `LocalTable.questionLearningStates` から読む。
 
 ### 初回起動・ログイン直後
 
-キャッシュが存在しない初回はフォールバックとして通常のローディングを表示する。SWRは「キャッシュあり」を前提とするため、初回はオンライン必須として割り切る。
+キャッシュが存在しない初回は、**ローカルが空のまま即時表示できない**。方針を次のいずれかに実装で統一する。
+
+1. **ブロッキング同期**: その画面の初回だけ `await ensureSyncedForLocalRead()`（または同等のフル同期）を行い、続けて SQLite 読み取りに移る。
+2. **専用オンボーディング**: ログイン直後の一度だけフル同期を完了させ、以降の画面は常に `triggerBackgroundSync()` のみ。
+
+いずれも「2回目以降はローカルファースト」が成立するようにする。SWR は「キャッシュあり」を前提とするため、**初回だけオンライン必須に割り切る**のは変わらない。
 
 ### Webでのページリロード
 
@@ -305,7 +325,25 @@ SM-2状態は `LocalTable.questionLearningStates` から読む。
 
 ### バックグラウンド同期中のインジケーター
 
-`ForceSyncIconButton` が既に AppBar に実装済み。バックグラウンド同期が走っていることをユーザーに示すためにそのまま活用する。
+`ForceSyncIconButton` が既に AppBar に実装済み。バックグラウンド同期が走っていることをユーザーに示すためにそのまま活用する。フェーズ2が長く失敗し続ける場合の「古いキャッシュ表示」の補助としても利用できる（重要な原則 5 と対応）。
+
+### Supabase への影響（誤ってDBを消すリスク）
+
+本設計の実装は **「読み取りをローカル優先にし、同期は既存の `SyncEngine` と同じ経路でバックグラウンド起動する」** ことが中心である。次の理由から、**テーブル丸ごとの削除や、条件なしの一括 DELETE のような事故は、設計どおり実装すれば起きない**。
+
+1. **`SyncEngine` の Pull**  
+   リモートから **select してローカルへマージするだけ**であり、Supabase 側の行を `delete` しない。
+
+2. **`SyncEngine` の Push（通常の dirty 行）**  
+   教材・問題・学習状態などは **`insert` / `upsert` / `update`** で送る。`question_learning_states` も upsert 系の経路であり、**行単位の物理 DELETE を同期で投げない**。
+
+3. **Push の「削除」に相当する処理**  
+   ローカルで `deleted=1` かつ `dirty=1` にマークされた行についてのみ、リモートへ **`deleted_at` をセットする update（ソフトデリート）** が走る。これは教師側のオフライン削除フロー用であり、学習者が四択・例文を解く処理とは別経路である。
+
+4. **本変更で新たにやること**  
+   `triggerBackgroundSync()` は内部で既存の `syncIfOnline()` を呼ぶだけなので、**同期の「リモートに対して何をするか」は現状と同じ**。画面側は SQLite 読み取りと `setState` のタイミングが変わるだけで、**新規コードで `client.from(...).delete()` を増やさない限り、Supabase のデータが誤って消える経路は増えない**。
+
+実装時のチェックとして、学習者向けのローカルファースト改修では **Supabase に対する `.delete()` や危険な一括更新を追加しない**ことをコードレビューで確認するとよい。
 
 ---
 
