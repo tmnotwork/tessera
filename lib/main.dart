@@ -815,9 +815,7 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
     if (!appAuthNotifier.isLoggedIn) {
       return const LearnerLoginScreen();
     }
-    return LearnerHomeScreen(
-      localDatabase: widget.localDatabase,
-    );
+    return _buildLearnerRoot();
   }
 
   /// Windows / macOS / Linux のみナビに出す。学習メニューをスマホ相当幅で確認する。
@@ -828,9 +826,41 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
     if (!appAuthNotifier.isLoggedIn) {
       return const LearnerLoginScreen();
     }
-    return LearnerHomeScreen(
-      localDatabase: widget.localDatabase,
-      embedInDesktopMobileFrame: true,
+    final scheme = Theme.of(context).colorScheme;
+    const previewWidth = 390.0;
+    return Scaffold(
+      backgroundColor: scheme.surfaceContainerLow,
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final maxH = constraints.maxHeight - 16;
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Container(
+                  width: previewWidth,
+                  height: maxH.clamp(0, double.infinity),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).scaffoldBackgroundColor,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: scheme.outline.withValues(alpha: 0.35)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.12),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: _buildLearnerRoot(),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
     );
   }
 
