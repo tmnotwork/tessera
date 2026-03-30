@@ -39,6 +39,21 @@ migrate_working_dir/
 # Cursor MCP (contains Supabase access token)
 .cursor/mcp.json
 
+# Claude Code ローカル設定
+.claude/settings.local.json
+
+# 別端末用バックアップ（リポジトリに含めない）
+**/*Thinkpad12*
+
+# 一時スクリプト・MCP 実行生成物
+scripts/_*.json
+scripts/_*.sql
+scripts/_*.txt
+scripts/batch_queries.json
+scripts/kankeishi_queries.jsonl
+scripts/kankeishi_stmts/
+scripts/mcp_args/
+
 # Symbolication related
 app.*.symbols
 

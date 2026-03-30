@@ -778,10 +778,10 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                 ),
               )
             else ...[
-              IconButton(
-                icon: const Icon(Icons.check),
+              TextButton.icon(
                 onPressed: () => _saveChanges(exitEditMode: true),
-                tooltip: '保存して終了',
+                icon: const Icon(Icons.save),
+                label: const Text('保存'),
               ),
               IconButton(
                 icon: Icon(

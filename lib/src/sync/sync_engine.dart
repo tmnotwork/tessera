@@ -1132,6 +1132,7 @@ class SyncEngine {
     } else if (remoteTable == 'knowledge_tags' || remoteTable == 'memorization_tags') {
       map['name'] = remote['name'] ?? '';
     } else if (remoteTable == 'study_sessions') {
+      map['learner_id'] = remote['learner_id']?.toString() ?? '';
       map['session_type'] = remote['session_type']?.toString() ?? '';
       map['content_id'] = remote['content_id']?.toString();
       map['content_title'] = remote['content_title']?.toString();

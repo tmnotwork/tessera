@@ -1,4 +1,4 @@
-﻿import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -313,13 +313,15 @@ class _FourChoiceProgressScreenState extends State<FourChoiceProgressScreen> wit
           children: [
             for (final entry in _groupedTiles.entries) ...[
               _chapterLabel(context, entry.key),
-              for (final item in entry.value)
+              for (var i = 0; i < entry.value.length; i++)
                 InkWell(
                   onTap: () async {
+                    final ids = entry.value.map((t) => t.questionId).toList();
                     await Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (context) => QuestionSolveScreen(
-                          questionIds: [item.questionId],
+                          questionIds: ids,
+                          initialQuestionIndex: i,
                           knowledgeTitle: entry.key,
                           isLearnerMode: true,
                         ),
@@ -332,7 +334,7 @@ class _FourChoiceProgressScreenState extends State<FourChoiceProgressScreen> wit
                     width: _tileExtent,
                     height: _tileExtent,
                     decoration: BoxDecoration(
-                      color: _tileColor(context, item.status),
+                      color: _tileColor(context, entry.value[i].status),
                       borderRadius: BorderRadius.circular(6),
                       border: Border.all(
                         color: Theme.of(context).colorScheme.outline,

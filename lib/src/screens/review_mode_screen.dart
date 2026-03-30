@@ -42,17 +42,7 @@ Map<String, dynamic> _localQuestionLearningRowToUiState(Map<String, dynamic> r) 
 /// - 例文読み上げ: [KnowledgeLearnerMemStatus.triForExampleItem] が要復習（進捗画面と同じ）
 /// - 英作文: [KnowledgeLearnerMemStatus.triForCompositionItem] が要復習（直近の英作文が不正解）
 class ReviewModeScreen extends StatefulWidget {
-  const ReviewModeScreen({
-    super.key,
-    this.learnerDisplayId,
-    this.showLearnerShellContext = false,
-  });
-
-  /// 学習者タブ用: `profiles.user_id` のショート表示（任意）
-  final String? learnerDisplayId;
-
-  /// ボトムナビ「復習」タブから開いたとき true（生徒バッジを出す）
-  final bool showLearnerShellContext;
+  const ReviewModeScreen({super.key});
 
   @override
   State<ReviewModeScreen> createState() => _ReviewModeScreenState();
@@ -413,51 +403,11 @@ class _ReviewModeScreenState extends State<ReviewModeScreen> {
         _wrongExamples.isEmpty &&
         _wrongCompositionExamples.isEmpty;
 
-    final scheme = Theme.of(context).colorScheme;
-    final id = widget.learnerDisplayId?.trim();
-    final showBadge = widget.showLearnerShellContext;
-    final badgeLabel =
-        (id != null && id.isNotEmpty) ? '生徒ID: $id' : '生徒';
-
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (showBadge) ...[
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: scheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.badge_outlined, size: 16, color: scheme.onPrimaryContainer),
-                    const SizedBox(width: 6),
-                    Text(
-                      badgeLabel,
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                            color: scheme.onPrimaryContainer,
-                            fontWeight: FontWeight.w600,
-                          ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-          ],
-          Text(
-            '学習状況で赤く表示される四択・例文読み上げ・英作文（直近のミス・復習期限切れなど）をまとめて復習できます。',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-          ),
-          const SizedBox(height: 24),
           if (bothEmpty) ...[
             Center(
               child: Column(
@@ -484,21 +434,18 @@ class _ReviewModeScreenState extends State<ReviewModeScreen> {
             ),
           ] else ...[
             _ReviewCard(
-              icon: Icons.quiz_outlined,
               title: '四択問題',
               count: _wrongQuestionIds.length,
               onStart: _wrongQuestionIds.isEmpty ? null : _startQuestionReview,
             ),
             const SizedBox(height: 16),
             _ReviewCard(
-              icon: Icons.record_voice_over_outlined,
               title: '例文読み上げ',
               count: _wrongExamples.length,
               onStart: _wrongExamples.isEmpty ? null : _startExampleReview,
             ),
             const SizedBox(height: 16),
             _ReviewCard(
-              icon: Icons.edit_note_outlined,
               title: '英作文',
               count: _wrongCompositionExamples.length,
               onStart: _wrongCompositionExamples.isEmpty
@@ -512,16 +459,14 @@ class _ReviewModeScreenState extends State<ReviewModeScreen> {
   }
 }
 
-/// 各モードの復習カード UI。
+/// 各モードの復習カード UI（左: メニュー名、右: 件数。件数があれば行タップで開始）。
 class _ReviewCard extends StatelessWidget {
   const _ReviewCard({
-    required this.icon,
     required this.title,
     required this.count,
     required this.onStart,
   });
 
-  final IconData icon;
   final String title;
   final int count;
   final VoidCallback? onStart;
@@ -530,6 +475,12 @@ class _ReviewCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final hasItems = count > 0;
+    final countStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w600,
+          color: hasItems
+              ? Colors.red.shade700
+              : scheme.onSurfaceVariant,
+        );
 
     return Card(
       elevation: 0,
@@ -537,61 +488,17 @@ class _ReviewCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(color: scheme.outlineVariant),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: hasItems
-                    ? Colors.red.shade50
-                    : Colors.green.shade50,
-                borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        title: Text(
+          title,
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w600,
               ),
-              child: Icon(
-                icon,
-                size: 24,
-                color: hasItems ? Colors.red.shade400 : Colors.green.shade400,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    hasItems ? '復習対象: $count 件' : '復習対象なし',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: hasItems
-                              ? Colors.red.shade600
-                              : Colors.green.shade600,
-                        ),
-                  ),
-                ],
-              ),
-            ),
-            if (hasItems)
-              FilledButton(
-                onPressed: onStart,
-                child: const Text('復習する'),
-              )
-            else
-              Icon(
-                Icons.check_circle,
-                color: Colors.green.shade400,
-                size: 28,
-              ),
-          ],
         ),
+        trailing: Text('$count件', style: countStyle),
+        onTap: hasItems ? onStart : null,
       ),
     );
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../database/local_database.dart';
@@ -6,6 +7,7 @@ import '../models/knowledge.dart';
 import '../repositories/knowledge_repository.dart';
 import '../services/knowledge_delete_flow.dart';
 import '../sync/knowledge_save_remote_status.dart';
+import '../widgets/edit_intents.dart';
 
 /// モバイル用の全画面編集画面
 class KnowledgeEditScreen extends StatefulWidget {
@@ -198,7 +200,7 @@ class _KnowledgeEditScreenState extends State<KnowledgeEditScreen> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    return Scaffold(
+    final scaffold = Scaffold(
       appBar: AppBar(
         title: const Text('編集'),
         leading: IconButton(
@@ -213,10 +215,13 @@ class _KnowledgeEditScreenState extends State<KnowledgeEditScreen> {
               child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2)),
             )
           else ...[
-            IconButton(
-              icon: const Icon(Icons.check),
-              onPressed: _save,
-              tooltip: '保存',
+            Tooltip(
+              message: '保存（Ctrl+S / ⌘S）',
+              child: TextButton.icon(
+                onPressed: _save,
+                icon: const Icon(Icons.save),
+                label: const Text('保存'),
+              ),
             ),
             IconButton(
               icon: Icon(Icons.delete_outline, color: scheme.error),
@@ -361,6 +366,26 @@ class _KnowledgeEditScreenState extends State<KnowledgeEditScreen> {
             ),
           ],
         ),
+      ),
+    );
+
+    return Shortcuts(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.keyS, control: true): SaveIntent(),
+        SingleActivator(LogicalKeyboardKey.keyS, meta: true): SaveIntent(),
+      },
+      child: Actions(
+        actions: {
+          SaveIntent: CallbackAction<SaveIntent>(
+            onInvoke: (_) {
+              if (!_saving) {
+                _save();
+              }
+              return null;
+            },
+          ),
+        },
+        child: scaffold,
       ),
     );
   }

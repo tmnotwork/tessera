@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../widgets/edit_intents.dart';
 
 enum EnglishExampleEditAction { cancel, save, delete }
 
@@ -161,7 +164,7 @@ class _EnglishExampleEditScreenState extends State<EnglishExampleEditScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final scaffold = Scaffold(
       appBar: AppBar(
         title: Text(_isEdit ? '英語例文を編集' : '英語例文を追加'),
         leading: IconButton(
@@ -170,17 +173,25 @@ class _EnglishExampleEditScreenState extends State<EnglishExampleEditScreen> {
           tooltip: '閉じる',
         ),
         actions: [
+          Tooltip(
+            message: '保存（Ctrl+S / ⌘S）',
+            child: TextButton(
+              onPressed: _saving ? null : _save,
+              child: _saving
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('保存'),
+            ),
+          ),
           if (_isEdit)
             IconButton(
               onPressed: _saving ? null : _delete,
               icon: const Icon(Icons.delete_outline),
               tooltip: '削除',
             ),
-          TextButton.icon(
-            onPressed: _saving ? null : _save,
-            icon: const Icon(Icons.save),
-            label: const Text('保存'),
-          ),
         ],
       ),
       body: Form(
@@ -267,19 +278,41 @@ class _EnglishExampleEditScreenState extends State<EnglishExampleEditScreen> {
               ),
             ),
             const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _saving ? null : _save,
-              icon: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save),
-              label: Text(_saving ? '保存中...' : '保存'),
+            Tooltip(
+              message: '保存（Ctrl+S / ⌘S）',
+              child: FilledButton.icon(
+                onPressed: _saving ? null : _save,
+                icon: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save),
+                label: Text(_saving ? '保存中...' : '保存'),
+              ),
             ),
           ],
         ),
+      ),
+    );
+
+    return Shortcuts(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.keyS, control: true): SaveIntent(),
+        SingleActivator(LogicalKeyboardKey.keyS, meta: true): SaveIntent(),
+      },
+      child: Actions(
+        actions: {
+          SaveIntent: CallbackAction<SaveIntent>(
+            onInvoke: (_) {
+              if (_saving) return null;
+              _save();
+              return null;
+            },
+          ),
+        },
+        child: scaffold,
       ),
     );
   }

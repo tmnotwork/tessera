@@ -8,6 +8,8 @@
 analyzer:
   exclude:
     - docs/yomiage_lib/**
+    # 別端末バックアップ（ビルド対象外・解析から除外）
+    - "**/*Thinkpad12*.dart"
 
 # The following line activates a set of recommended lints for Flutter apps,
 # packages, and plugins designed to encourage good coding practices.

@@ -19,12 +19,13 @@ import 'src/init_sqflite_stub.dart' if (dart.library.io) 'src/init_sqflite_io.da
 import 'src/services/study_timer_service.dart';
 import 'src/sync/sync_engine.dart';
 import 'src/widgets/force_sync_icon_button.dart';
+import 'src/widgets/learner_streak_strip.dart';
 import 'src/widgets/study_time_user_activity_scope.dart';
 import 'src/screens/english_example_list_screen.dart';
 import 'src/screens/knowledge_db_home_page.dart';
-import 'src/screens/learner_home_screen.dart';
 import 'src/screens/learner_knowledge_tab.dart';
 import 'src/screens/learner_learning_status_menu_screen.dart';
+import 'src/screens/learner_question_set_menu_screen.dart';
 import 'src/screens/learner_login_screen.dart';
 import 'src/screens/learner_review_tab.dart';
 import 'src/learner_admin.dart';
@@ -448,11 +449,9 @@ class RootScaffold extends StatefulWidget {
 class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver {
   /// Windows デスクトップ起動時は教師用管理を最初に表示（タブ順: 0学習 / 1知識DB / 2教師用管理）
   int _index = isWindows ? 2 : 0;
-  /// 学習者向け5タブの選択インデックス
+  /// 学習者向けボトムナビ／レールの選択インデックス（デスクトップ学習タブは英作文で6項目）
   int _learnerTabIndex = 0;
   String? _role;
-  /// 学習者のショートログインID（profiles.user_id）
-  String? _learnerDisplayId;
   bool _authReady = false;
   _LoginGateMode _loginGateMode = _LoginGateMode.choose;
   /// ログイン直後の「科目が取れるか」検証結果。null=未検証または成功、非null=失敗メッセージ（画面に表示）
@@ -561,19 +560,11 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
         subjectsCheck = '科目の取得に失敗しました: $e';
       }
     }
-    // 学習者の場合はショートログインIDを取得
-    String? learnerDisplayId;
-    if (role == 'learner' && appAuthNotifier.isLoggedIn) {
-      try {
-        learnerDisplayId = await appAuthNotifier.fetchProfileUserId();
-      } catch (_) {}
-    }
     if (mounted) {
       setState(() {
         _role = role;
         _authReady = true;
         _postLoginSubjectsCheck = subjectsCheck;
-        if (role == 'learner') _learnerDisplayId = learnerDisplayId;
       });
     }
   }
@@ -616,24 +607,99 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
     );
   }
 
-  /// 学習者向け：5タブのボトムナビ構成（abceed スタイル）
-  Widget _buildLearnerRoot() {
+  /// 学習者向け：モバイルは5タブのボトムナビ、デスクトップ学習タブは左レール（英作文を6項目目で直接表示）
+  ///
+  /// [embedStreakLaunchEffects] false: デスクトップ親が [LearnerStreakLaunchEffects] を出すとき（二重実行防止）
+  /// [offerStreakDailyGreeting] false: 内側プレビュー用。当日初回 SnackBar は外側だけ。
+  Widget _buildLearnerRoot({
+    bool desktopLearnerSideNav = false,
+    bool embedStreakLaunchEffects = true,
+    bool offerStreakDailyGreeting = true,
+  }) {
     final tabs = <Widget>[
-      LearnerReviewTab(displayId: _learnerDisplayId),
+      const LearnerReviewTab(),
       LearnerLearningStatusMenuScreen(localDatabase: widget.localDatabase),
       LearnerKnowledgeTab(localDatabase: widget.localDatabase),
-      const LearnerFourChoiceSolveScreen(),
+      const LearnerQuestionSetMenuScreen(),
       const EnglishExampleListScreen(isLearnerMode: true, readAloudMenuOnly: true),
+      if (desktopLearnerSideNav)
+        const EnglishExampleListScreen(
+          isLearnerMode: true,
+          compositionMenuOnly: true,
+        ),
     ];
-    return Scaffold(
-      body: Column(
+    final tabCount = tabs.length;
+    final safeLearnerIndex =
+        _learnerTabIndex < tabCount ? _learnerTabIndex : tabCount - 1;
+    if (safeLearnerIndex != _learnerTabIndex) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _learnerTabIndex = safeLearnerIndex);
+      });
+    }
+    final body = Column(
+      children: [
+        if (embedStreakLaunchEffects && _postLoginSubjectsCheck != null)
+          _buildSubjectsCheckBanner(),
+        if (embedStreakLaunchEffects)
+          LearnerStreakLaunchEffects(
+            localDatabase: widget.localDatabase,
+            offerDailyGreeting: offerStreakDailyGreeting,
+          ),
+        Expanded(child: tabs[safeLearnerIndex]),
+      ],
+    );
+
+    if (desktopLearnerSideNav) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (_postLoginSubjectsCheck != null) _buildSubjectsCheckBanner(),
-          Expanded(child: tabs[_learnerTabIndex]),
+          NavigationRail(
+            selectedIndex: safeLearnerIndex,
+            onDestinationSelected: (i) => setState(() => _learnerTabIndex = i),
+            labelType: NavigationRailLabelType.selected,
+            destinations: const [
+              NavigationRailDestination(
+                icon: Icon(Icons.replay_outlined),
+                selectedIcon: Icon(Icons.replay),
+                label: Text('復習'),
+              ),
+              NavigationRailDestination(
+                icon: Icon(Icons.bar_chart_outlined),
+                selectedIcon: Icon(Icons.bar_chart),
+                label: Text('学習状況'),
+              ),
+              NavigationRailDestination(
+                icon: Icon(Icons.menu_book_outlined),
+                selectedIcon: Icon(Icons.menu_book),
+                label: Text('参考書'),
+              ),
+              NavigationRailDestination(
+                icon: Icon(Icons.quiz_outlined),
+                selectedIcon: Icon(Icons.quiz),
+                label: Text('問題集'),
+              ),
+              NavigationRailDestination(
+                icon: Icon(Icons.volume_up_outlined),
+                selectedIcon: Icon(Icons.volume_up),
+                label: Text('読み上げ'),
+              ),
+              NavigationRailDestination(
+                icon: Icon(Icons.edit_note_outlined),
+                selectedIcon: Icon(Icons.edit_note),
+                label: Text('英作文'),
+              ),
+            ],
+          ),
+          const VerticalDivider(width: 1, thickness: 1),
+          Expanded(child: body),
         ],
-      ),
+      );
+    }
+
+    return Scaffold(
+      body: body,
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _learnerTabIndex,
+        selectedIndex: safeLearnerIndex,
         onDestinationSelected: (i) => setState(() => _learnerTabIndex = i),
         destinations: const [
           NavigationDestination(
@@ -705,7 +771,10 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
     if (!appAuthNotifier.isLoggedIn) {
       return const LearnerLoginScreen();
     }
-    return _buildLearnerRoot();
+    return _buildLearnerRoot(
+      desktopLearnerSideNav: true,
+      embedStreakLaunchEffects: false,
+    );
   }
 
   /// Windows / macOS / Linux のみナビに出す。学習メニューをスマホ相当幅で確認する。
@@ -871,6 +940,10 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
       body: Column(
         children: [
           if (_postLoginSubjectsCheck != null) _buildSubjectsCheckBanner(),
+          if (_index != 3)
+            LearnerStreakLaunchEffects(
+              localDatabase: widget.localDatabase,
+            ),
           Expanded(child: pages[_index]),
         ],
       ),
@@ -1138,6 +1211,16 @@ Future<Database> _initLocalDb() async {
       }
       if (oldVersion < 12) {
         await createEnglishExampleStateTables(db);
+      }
+      if (oldVersion < 13) {
+        final cols = await db.rawQuery("PRAGMA table_info('study_sessions')");
+        final hasLearnerId =
+            cols.any((c) => c['name']?.toString() == 'learner_id');
+        if (!hasLearnerId && cols.isNotEmpty) {
+          await db.execute(
+            'ALTER TABLE study_sessions ADD COLUMN learner_id TEXT',
+          );
+        }
       }
     },
     onOpen: (db) async {

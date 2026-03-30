@@ -55,11 +55,17 @@ void main() async {
     (
       knowledgeTitle: '仮定法未来(1)were to',
       questionText: r'If the sun _____ in the west, I would not change my mind.',
-      choices: ['rises', 'rose', 'were to rise', 'had risen'],
-      correctIndex: 2,
-      explanation: '仮定法未来の were to は「非現実的・思考実験的」な仮定で、if 節は were to ＋ 原形。'
-          '「太陽が西から昇る」はありえないので were to が適する。したがって (C) were to rise。'
-          'rises / rose は仮定法未来の形ではない。had risen は仮定法過去完了。',
+      // 誤答に直説法・過去形・過去完了を混ぜない（仮定法未来の形だけにそろえる）
+      choices: [
+        'were to rise',
+        'should rise',
+        'were to shine',
+        'should shine',
+      ],
+      correctIndex: 0,
+      explanation: '選択肢はすべて仮定法未来（were to / should ＋ 原形）の形にそろえている。'
+          '非現実的な「思考実験」には were to が適し、should は万が一の仮定向き。'
+          '「太陽が西から昇る」のコロケーションでは動詞は rise。shine は不適。したがって (A) were to rise。',
     ),
     (
       knowledgeTitle: '仮定法未来(2)should',
@@ -93,10 +99,14 @@ void main() async {
     (
       knowledgeTitle: '仮定法：if の省略（倒置）',
       questionText: r'_____ rich, I would travel the world.',
-      choices: ['If I were', 'Were I', 'I were', 'If I was'],
+      // If I were も全文なら正しいが、本問は「if なしの倒置」知識のため誤答に含めない（正解の一意性のため）
+      choices: ['If I was', 'Were I', 'Had I', 'Was I'],
       correctIndex: 1,
-      explanation: '仮定法で if を省略すると主語と動詞が倒置する。Were I rich = If I were rich。'
-          'したがって (B) Were I。(A) は正しいが if 省略形ではない。(C)(D) は文法的に不適。',
+      explanation: '知識カードのポイントは、if を付けずに were と主語を倒置して条件を文頭に置く形（Were I rich = If I were rich）。'
+          '空欄に続くのは rich なので、倒置の Were I だけが「金持ちなら」として成立する。'
+          'If I was は仮定法では were が標準で、この倒置形の書き方でもない。'
+          'Had I のあとに形容詞 rich だけを続ける形は成立しない（完了仮定なら been などが要る）。'
+          'Was I を文頭に置いても、この主節 would travel とつながる倒置の条件節にならない。したがって (B) Were I。',
     ),
     (
       knowledgeTitle: 'If節のない仮定法：with / without / but for',

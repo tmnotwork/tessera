@@ -731,15 +731,46 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
     }
   }
 
-  Future<void> _reorderCards(int oldIndex, int newIndex) async {
+  /// [list] の並びを保ったまま、隣接同一 unit をまとめたチャプターブロックに分割する。
+  List<(String title, List<Knowledge> items)> _chapterBlocks(List<Knowledge> list) {
+    final out = <(String, List<Knowledge>)>[];
+    for (final k in list) {
+      final u = k.unit ?? 'その他';
+      if (out.isEmpty || out.last.$1 != u) {
+        out.add((u, [k]));
+      } else {
+        out.last.$2.add(k);
+      }
+    }
+    return out;
+  }
+
+  /// 同一チャプター（連続ブロック）内の並べ替え。表示は折りたたみ時は行わない。
+  Future<void> _reorderCardsInChapter(String chapterTitle, int oldIndex, int newIndex) async {
     if (newIndex > oldIndex) newIndex--;
-    final reordered = List<Knowledge>.from(_items);
-    final item = reordered.removeAt(oldIndex);
-    reordered.insert(newIndex, item);
-    final withOrders = _withSequentialDisplayOrder(reordered);
-
+    var start = -1;
+    var end = -1;
+    for (var i = 0; i < _items.length; i++) {
+      final u = _items[i].unit ?? 'その他';
+      if (u == chapterTitle) {
+        if (start < 0) start = i;
+        end = i;
+      } else if (start >= 0) {
+        break;
+      }
+    }
+    if (start < 0 || end < start) return;
+    final sub = List<Knowledge>.from(_items.sublist(start, end + 1));
+    if (oldIndex < 0 || oldIndex >= sub.length) return;
+    final item = sub.removeAt(oldIndex);
+    sub.insert(newIndex.clamp(0, sub.length), item);
+    final newFull = [
+      ..._items.sublist(0, start),
+      ...sub,
+      ..._items.sublist(end + 1),
+    ];
+    final withOrders = _withSequentialDisplayOrder(newFull);
     setState(() => _items = withOrders);
-
     try {
       await _persistDisplayOrdersAfterReorder(withOrders);
     } catch (e) {
@@ -787,32 +818,40 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
     );
   }
 
-  Widget _buildReorderableList(BuildContext context) {
-    return ReorderableListView.builder(
-      buildDefaultDragHandles: false,
-      itemCount: _items.length,
-      onReorder: _reorderCards,
-      itemBuilder: (context, index) {
-        final item = _items[index];
-        final prevTopic = index > 0 ? _items[index - 1].unit : null;
-        final showHeader = item.unit != prevTopic;
-
-        final tile = _buildListTile(context, item, index, draggable: true);
-        final dragListener = isDesktop
-            ? ReorderableDragStartListener(index: index, child: tile)
-            : ReorderableDelayedDragStartListener(index: index, child: tile);
-
-        return KeyedSubtree(
-          key: ValueKey(item.id),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (showHeader)
-                _buildChapterHeader(context, item.unit ?? 'その他'),
-              dragListener,
-            ],
-          ),
+  /// 教師・タグなし一覧。[ExpansionTile] 内に [ReorderableListView] を置くと
+  /// Windows 等で子が描画されず展開部が無地のグレーになるため、通常の行リストとし、
+  /// チャプター内の並べ替えは ↑↓ で行う。
+  Widget _buildTeacherChapterList(BuildContext context) {
+    final blocks = _chapterBlocks(_items);
+    final scheme = Theme.of(context).colorScheme;
+    final titleStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.bold,
+        );
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 16),
+      itemCount: blocks.length,
+      itemBuilder: (context, blockIndex) {
+        final (title, chapterItems) = blocks[blockIndex];
+        return ExpansionTile(
+          key: PageStorageKey<String>('knowledge_chapter_teacher_${title}_$blockIndex'),
+          initiallyExpanded: false,
+          collapsedBackgroundColor: scheme.surface,
+          backgroundColor: scheme.surface,
+          title: Text(title, style: titleStyle),
+          childrenPadding: EdgeInsets.zero,
+          children: [
+            for (var i = 0; i < chapterItems.length; i++)
+              _buildListTile(
+                context,
+                chapterItems[i],
+                _items.indexWhere((e) => e.id == chapterItems[i].id),
+                draggable: false,
+                onMoveUp: i > 0 ? () => _reorderCardsInChapter(title, i, i - 1) : null,
+                onMoveDown: i < chapterItems.length - 1
+                    ? () => _reorderCardsInChapter(title, i, i + 2)
+                    : null,
+              ),
+          ],
         );
       },
     );
@@ -830,36 +869,34 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
         ),
       );
     }
+    final blocks = _chapterBlocks(list);
+    final titleStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.bold,
+        );
+    final scheme = Theme.of(context).colorScheme;
     return ListView.builder(
-      itemCount: list.length,
-      itemBuilder: (context, index) {
-        final item = list[index];
-        final prevTopic = index > 0 ? list[index - 1].unit : null;
-        final showHeader = item.unit != prevTopic;
-        final detailIndex = _items.indexWhere((e) => e.id == item.id);
-        return Column(
-          key: ValueKey(item.id),
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+      padding: const EdgeInsets.only(bottom: 16),
+      itemCount: blocks.length,
+      itemBuilder: (context, blockIndex) {
+        final (title, chapterItems) = blocks[blockIndex];
+        return ExpansionTile(
+          key: PageStorageKey<String>('knowledge_chapter_plain_${title}_$blockIndex'),
+          initiallyExpanded: false,
+          collapsedBackgroundColor: scheme.surface,
+          backgroundColor: scheme.surface,
+          title: Text(title, style: titleStyle),
+          childrenPadding: EdgeInsets.zero,
           children: [
-            if (showHeader) _buildChapterHeader(context, item.unit ?? 'その他'),
-            _buildListTile(context, item, detailIndex, draggable: false),
+            for (final item in chapterItems)
+              _buildListTile(
+                context,
+                item,
+                _items.indexWhere((e) => e.id == item.id),
+                draggable: false,
+              ),
           ],
         );
       },
-    );
-  }
-
-  Widget _buildChapterHeader(BuildContext context, String title) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-      alignment: Alignment.centerLeft,
-      child: Text(
-        title,
-        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-      ),
     );
   }
 
@@ -895,8 +932,14 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
     );
   }
 
-  Widget _buildListTile(BuildContext context, Knowledge item, int index,
-      {required bool draggable}) {
+  Widget _buildListTile(
+    BuildContext context,
+    Knowledge item,
+    int index, {
+    required bool draggable,
+    VoidCallback? onMoveUp,
+    VoidCallback? onMoveDown,
+  }) {
     final scheme = Theme.of(context).colorScheme;
     return ListTile(
       leading: _devCompletedLeading(context, item),
@@ -906,6 +949,28 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
           : Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (onMoveUp != null || onMoveDown != null)
+                  PopupMenuButton<int>(
+                    tooltip: 'このチャプター内で並べ替え',
+                    padding: EdgeInsets.zero,
+                    child: Icon(Icons.reorder, size: 22, color: scheme.onSurfaceVariant),
+                    onSelected: (v) {
+                      if (v < 0) onMoveUp?.call();
+                      if (v > 0) onMoveDown?.call();
+                    },
+                    itemBuilder: (context) => [
+                      if (onMoveUp != null)
+                        const PopupMenuItem<int>(
+                          value: -1,
+                          child: Text('ひとつ前へ'),
+                        ),
+                      if (onMoveDown != null)
+                        const PopupMenuItem<int>(
+                          value: 1,
+                          child: Text('ひとつ次へ'),
+                        ),
+                    ],
+                  ),
                 if (item.construction)
                   Padding(
                     padding: const EdgeInsets.only(right: 8.0),
@@ -930,9 +995,10 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
                         backgroundColor: scheme.surfaceContainerHighest,
                       ),
                     )),
-                draggable
-                    ? Icon(Icons.drag_handle, color: scheme.onSurfaceVariant)
-                    : const Icon(Icons.chevron_right),
+                if (draggable)
+                  Icon(Icons.drag_handle, color: scheme.onSurfaceVariant)
+                else if (onMoveUp == null && onMoveDown == null)
+                  const Icon(Icons.chevron_right),
               ],
             ),
       onTap: () => _openDetail(index),
@@ -1008,7 +1074,7 @@ class _KnowledgeListScreenState extends State<KnowledgeListScreen> {
                 _buildTagFilter(context),
                 Expanded(
                   child: _filterTag == null && !widget.isLearnerMode
-                      ? _buildReorderableList(context)
+                      ? _buildTeacherChapterList(context)
                       : _buildPlainList(context),
                 ),
               ],

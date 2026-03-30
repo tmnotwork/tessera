@@ -21,10 +21,14 @@ class QuestionSolveScreen extends StatefulWidget {
     required this.questionIds,
     required this.knowledgeTitle,
     this.isLearnerMode = false,
+    this.initialQuestionIndex = 0,
   });
 
   final List<String> questionIds;
   final String knowledgeTitle;
+
+  /// [questionIds] のうち最初に表示する位置（0 始まり）。一覧から特定の問題を開いたときに連続出題する。
+  final int initialQuestionIndex;
   /// true のとき、紐づく知識を開く画面も学習者向け（編集不可・例文表示）
   final bool isLearnerMode;
 
@@ -68,6 +72,10 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
   @override
   void initState() {
     super.initState();
+    final n = widget.questionIds.length;
+    if (n > 0) {
+      _index = widget.initialQuestionIndex.clamp(0, n - 1);
+    }
     _loadQuestion();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
@@ -517,6 +525,21 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
     return _answered;
   }
 
+  Future<void> _advanceToNextOrFinish() async {
+    await _waitPendingSave();
+    if (!mounted) return;
+    if (_index < widget.questionIds.length - 1) {
+      setState(() {
+        _index++;
+        _answered = false;
+        _selectedIndex = null;
+      });
+      _loadQuestion();
+    } else {
+      Navigator.of(context).pop();
+    }
+  }
+
   Widget? _buildBottomNavigationBar(BuildContext context) {
     if (_loading || _error != null || _question == null) return null;
     final choices = _currentChoices;
@@ -532,23 +555,6 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
         _selectedIndex = null;
       });
       _loadQuestion();
-    }
-
-    Future<void> goNext() async {
-      await _waitPendingSave();
-      if (!mounted) return;
-      setState(() {
-        _index++;
-        _answered = false;
-        _selectedIndex = null;
-      });
-      _loadQuestion();
-    }
-
-    Future<void> finish() async {
-      await _waitPendingSave();
-      if (!context.mounted) return;
-      Navigator.of(context).pop();
     }
 
     final hasPrev = _index > 0;
@@ -573,13 +579,15 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
               const Spacer(),
               if (hasNext)
                 FilledButton.icon(
-                  onPressed: canAdvance ? goNext : null,
+                  onPressed:
+                      canAdvance ? () => unawaited(_advanceToNextOrFinish()) : null,
                   icon: const Icon(Icons.chevron_right),
-                  label: const Text('次の問題'),
+                  label: const Text('次の問題へ'),
                 )
               else
                 FilledButton.icon(
-                  onPressed: canAdvance ? finish : null,
+                  onPressed:
+                      canAdvance ? () => unawaited(_advanceToNextOrFinish()) : null,
                   icon: const Icon(Icons.menu_book),
                   label: const Text('知識に戻る'),
                 ),
@@ -1100,6 +1108,26 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                     ),
                   );
                 }),
+              ],
+              if (widget.isLearnerMode &&
+                  isMultipleChoice &&
+                  widget.questionIds.length > 1) ...[
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: _canAdvanceToNextOrFinish(choices)
+                      ? () => unawaited(_advanceToNextOrFinish())
+                      : null,
+                  icon: Icon(
+                    _index < widget.questionIds.length - 1
+                        ? Icons.chevron_right
+                        : Icons.menu_book,
+                  ),
+                  label: Text(
+                    _index < widget.questionIds.length - 1
+                        ? '次の問題へ'
+                        : '知識に戻る',
+                  ),
+                ),
               ],
             ],
             // 前へ／次へは bottomNavigationBar に固定（解答後も常に操作しやすい）

@@ -1,10 +1,12 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/question_choice.dart';
 import '../sync/ensure_synced_for_local_read.dart';
+import '../widgets/edit_intents.dart';
 
 /// 四択問題の新規作成・編集画面
 class FourChoiceCreateScreen extends StatefulWidget {
@@ -451,10 +453,28 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final scaffold = Scaffold(
       appBar: AppBar(
         title: Text(_isEditMode ? '四択問題を編集' : '四択問題を作成'),
         actions: [
+          if (_saving)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else
+            Tooltip(
+              message: _isEditMode ? '更新（Ctrl+S / ⌘S）' : '作成（Ctrl+S / ⌘S）',
+              child: TextButton.icon(
+                onPressed: (_loadingQuestion || _saving) ? null : _save,
+                icon: const Icon(Icons.save),
+                label: Text(_isEditMode ? '更新' : '作成'),
+              ),
+            ),
           if (_isEditMode)
             IconButton(
               icon: const Icon(Icons.delete_outline),
@@ -603,13 +623,35 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
               onChanged: (v) => setState(() => _devCompleted = v),
             ),
             const SizedBox(height: 32),
-            FilledButton.icon(
-              onPressed: _saving ? null : _save,
-              icon: _saving ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.save),
-              label: Text(_saving ? '保存中...' : (_isEditMode ? '更新' : '作成')),
+            Tooltip(
+              message: _isEditMode ? '更新（Ctrl+S / ⌘S）' : '作成（Ctrl+S / ⌘S）',
+              child: FilledButton.icon(
+                onPressed: _saving ? null : _save,
+                icon: _saving ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.save),
+                label: Text(_saving ? '保存中...' : (_isEditMode ? '更新' : '作成')),
+              ),
             ),
           ],
         ),
+      ),
+    );
+
+    return Shortcuts(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.keyS, control: true): SaveIntent(),
+        SingleActivator(LogicalKeyboardKey.keyS, meta: true): SaveIntent(),
+      },
+      child: Actions(
+        actions: {
+          SaveIntent: CallbackAction<SaveIntent>(
+            onInvoke: (_) {
+              if (_saving || _loadingQuestion) return null;
+              _save();
+              return null;
+            },
+          ),
+        },
+        child: scaffold,
       ),
     );
   }

@@ -375,7 +375,7 @@ class _EnglishExampleCompositionScreenState extends State<EnglishExampleComposit
                 FilledButton(
                   onPressed: _saving ? null : _goNextOrFinish,
                   child: Text(
-                    _index + 1 < widget.examples.length ? '次の例文' : '終了',
+                    _index + 1 < widget.examples.length ? '次の問題へ' : '終了',
                   ),
                 ),
               ],

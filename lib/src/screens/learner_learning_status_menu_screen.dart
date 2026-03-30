@@ -4,9 +4,7 @@ import '../database/local_database.dart';
 import 'english_example_composition_progress_screen.dart';
 import 'english_example_progress_screen.dart';
 import 'four_choice_progress_screen.dart';
-import 'review_mode_screen.dart';
 import 'study_report_screen.dart';
-import 'study_time_summary_screen.dart';
 
 /// 学習者向け：例文・四択など学習状況確認画面への入口。
 class LearnerLearningStatusMenuScreen extends StatelessWidget {
@@ -23,20 +21,6 @@ class LearnerLearningStatusMenuScreen extends StatelessWidget {
       body: ListView(
         children: [
           ListTile(
-            leading: const Icon(Icons.replay),
-            title: const Text('復習モード'),
-            subtitle: const Text('学習状況で赤表示の四択・例文読み上げ・英作文をまとめて復習'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (context) => const ReviewModeScreen(),
-                ),
-              );
-            },
-          ),
-          const Divider(height: 1),
-          ListTile(
             leading: const Icon(Icons.bar_chart),
             title: const Text('学習時間レポート'),
             subtitle: const Text('日・週・月・年ごとの学習時間を確認'),
@@ -45,22 +29,6 @@ class LearnerLearningStatusMenuScreen extends StatelessWidget {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (context) => StudyReportScreen(
-                    localDatabase: localDatabase,
-                  ),
-                ),
-              );
-            },
-          ),
-          const Divider(height: 1),
-          ListTile(
-            leading: const Icon(Icons.timer_outlined),
-            title: const Text('勉強時間（セッション一覧）'),
-            subtitle: const Text('直近7日の合計・内訳・最近のセッション'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (context) => StudyTimeSummaryScreen(
                     localDatabase: localDatabase,
                   ),
                 ),

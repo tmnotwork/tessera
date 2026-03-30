@@ -247,9 +247,16 @@ class _EnglishExampleCompositionProgressScreenState
     );
   }
 
-  Widget _statusTile(BuildContext context, _ExampleTileItem item) {
+  Widget _statusTile(
+    BuildContext context,
+    _ExampleTileItem item,
+    List<_ExampleTileItem> chapterItems,
+    int indexInChapter,
+  ) {
     return InkWell(
-      onTap: () => _openComposition(item.rawRow),
+      onTap: () async {
+        await _openCompositionFromChapter(chapterItems, indexInChapter);
+      },
       borderRadius: BorderRadius.circular(6),
       child: Container(
         width: _tileExtent,
@@ -266,12 +273,23 @@ class _EnglishExampleCompositionProgressScreenState
     );
   }
 
-  Future<void> _openComposition(Map<String, dynamic> raw) async {
-    final ex = EnglishExample.fromRow(raw);
+  Future<void> _openCompositionFromChapter(
+    List<_ExampleTileItem> chapterItems,
+    int indexInChapter,
+  ) async {
+    if (chapterItems.isEmpty ||
+        indexInChapter < 0 ||
+        indexInChapter >= chapterItems.length) {
+      return;
+    }
+    final examples = chapterItems
+        .map((e) => EnglishExample.fromRow(e.rawRow))
+        .toList();
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (context) => EnglishExampleCompositionScreen(
-          examples: [ex],
+          examples: examples,
+          initialIndex: indexInChapter,
           subjectName: '英作文出題',
           sessionDescriptor: '進捗から',
         ),
@@ -364,7 +382,13 @@ class _EnglishExampleCompositionProgressScreenState
                 children: [
                   for (final entry in _groupedTiles.entries) ...[
                     _chapterLabel(context, entry.key),
-                    for (final item in entry.value) _statusTile(context, item),
+                    for (var i = 0; i < entry.value.length; i++)
+                      _statusTile(
+                        context,
+                        entry.value[i],
+                        entry.value,
+                        i,
+                      ),
                   ],
                 ],
               ),

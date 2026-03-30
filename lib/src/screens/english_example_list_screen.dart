@@ -298,7 +298,8 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
           MaterialPageRoute<void>(
             builder: (context) => EnglishExampleSolveScreen(
               examples: examples,
-              subjectName: widget.subjectName,
+              subjectName: widget.subjectName ??
+                  (_readAloudMenuOnly ? '読み上げ' : null),
               sessionDescriptor: sessionDescriptor,
               initialStates: initialStates,
             ),
@@ -635,10 +636,13 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final learnerReadAloudBase =
-        widget.subjectName == null || widget.subjectName!.isEmpty
-        ? '例文読み上げ'
-        : '${widget.subjectName} · 例文読み上げ';
+    final learnerReadAloudBase = _readAloudMenuOnly
+        ? (widget.subjectName == null || widget.subjectName!.isEmpty
+              ? '読み上げ'
+              : '${widget.subjectName} · 読み上げ')
+        : (widget.subjectName == null || widget.subjectName!.isEmpty
+              ? '例文読み上げ'
+              : '${widget.subjectName} · 例文読み上げ');
     final learnerCompositionBase =
         widget.subjectName == null || widget.subjectName!.isEmpty
         ? '英作文出題'
