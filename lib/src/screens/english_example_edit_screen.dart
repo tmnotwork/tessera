@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../widgets/dev_completion_segmented.dart';
 import '../widgets/edit_intents.dart';
 
 enum EnglishExampleEditAction { cancel, save, delete }
@@ -52,6 +53,7 @@ class _EnglishExampleEditScreenState extends State<EnglishExampleEditScreen> {
 
   String? _selectedKnowledgeId;
   bool _saving = false;
+  late bool _devCompleted;
 
   bool get _isEdit => widget.current != null;
 
@@ -85,6 +87,9 @@ class _EnglishExampleEditScreenState extends State<EnglishExampleEditScreen> {
     if (!_hasKnowledge(_selectedKnowledgeId) && widget.knowledgeCandidates.isNotEmpty) {
       _selectedKnowledgeId = widget.knowledgeCandidates.first['id']?.toString();
     }
+
+    final dc = current?['dev_completed'];
+    _devCompleted = dc == true || dc == 1;
   }
 
   @override
@@ -141,6 +146,7 @@ class _EnglishExampleEditScreenState extends State<EnglishExampleEditScreen> {
         'supplement': _nullable(_supplementController.text),
         'prompt_supplement': _nullable(_promptSupplementController.text),
         'display_order': displayOrder,
+        'dev_completed': _devCompleted,
       };
       if (!mounted) return;
       Navigator.of(context).pop(EnglishExampleEditOutcome.save(payload));
@@ -276,6 +282,12 @@ class _EnglishExampleEditScreenState extends State<EnglishExampleEditScreen> {
                 labelText: '表示順（任意）',
                 border: OutlineInputBorder(),
               ),
+            ),
+            const SizedBox(height: 20),
+            DevCompletionSegmented(
+              value: _devCompleted,
+              enabled: !_saving,
+              onChanged: (v) => setState(() => _devCompleted = v),
             ),
             const SizedBox(height: 24),
             Tooltip(

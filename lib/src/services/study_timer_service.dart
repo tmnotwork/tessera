@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../sync/sync_engine.dart';
 import 'tts_service.dart';
@@ -186,12 +185,10 @@ class StudyTimerService with WidgetsBindingObserver {
     final ttsSec = (_ttsMs / 1000).round();
 
     final endedIso = ended.toIso8601String();
-    final learnerId = Supabase.instance.client.auth.currentUser?.id ?? '';
     final row = <String, Object?>{
       'dirty': 1,
       'deleted': 0,
       'updated_at': endedIso,
-      'learner_id': learnerId,
       'session_type': _sessionType,
       'content_id': _contentId,
       'content_title': _contentTitle,

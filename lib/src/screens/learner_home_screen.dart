@@ -665,33 +665,14 @@ class _LearnerFourChoiceSolveScreenState
     }
   }
 
-  /// 「覚えている」以外（未挑戦・要復習＝未回答・不正解／復習期限）を [_questionIds] の並びのまま返す。
-  List<String> _orderedQuestionIdsNeedingPractice() {
-    final need = <String>{};
-    for (final list in _groupedTiles.values) {
-      for (final item in list) {
-        if (item.status != _TileStatus.remembered) {
-          need.add(item.questionId);
-        }
-      }
-    }
-    return _questionIds.where((id) => need.contains(id)).toList();
-  }
-
-  void _startNeedsPracticeSolve() {
-    final ids = _orderedQuestionIdsNeedingPractice();
-    if (ids.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('未回答・不正解の問題はありません')),
-      );
-      return;
-    }
+  void _startSolve() {
+    if (_questionIds.isEmpty) return;
     Navigator.of(context)
         .push(
           MaterialPageRoute(
             builder: (context) => QuestionSolveScreen(
-              questionIds: ids,
-              knowledgeTitle: '四択問題（未回答・不正解）',
+              questionIds: _questionIds,
+              knowledgeTitle: '四択問題',
               isLearnerMode: true,
             ),
           ),
@@ -846,9 +827,9 @@ class _LearnerFourChoiceSolveScreenState
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: FilledButton.icon(
-                    onPressed: _startNeedsPracticeSolve,
+                    onPressed: _startSolve,
                     icon: const Icon(Icons.play_arrow),
-                    label: const Text('未回答・不正解の問題を解く'),
+                    label: const Text('全問題を解く'),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -910,12 +891,8 @@ class _LearnerFourChoiceSolveScreenState
                         ),
                       ),
                       if (expanded)
-                        ...tiles.asMap().entries.map((e) {
-                          final item = e.value;
-                          final listIndex = e.key;
-                          final chapterIds =
-                              tiles.map((t) => t.questionId).toList();
-                          return ListTile(
+                        ...tiles.map(
+                          (item) => ListTile(
                             contentPadding: const EdgeInsets.only(
                               left: 24,
                               right: 16,
@@ -930,17 +907,16 @@ class _LearnerFourChoiceSolveScreenState
                               await Navigator.of(context).push(
                                 MaterialPageRoute(
                                   builder: (context) => QuestionSolveScreen(
-                                    questionIds: chapterIds,
-                                    initialQuestionIndex: listIndex,
-                                    knowledgeTitle: chapter,
+                                    questionIds: [item.questionId],
+                                    knowledgeTitle: item.cardTitle,
                                     isLearnerMode: true,
                                   ),
                                 ),
                               );
                               if (mounted) _load();
                             },
-                          );
-                        }),
+                          ),
+                        ),
                       const Divider(height: 1),
                     ],
                   );

@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/question_choice.dart';
 import '../sync/ensure_synced_for_local_read.dart';
+import '../widgets/dev_completion_segmented.dart';
 import '../widgets/edit_intents.dart';
 
 /// 四択問題の新規作成・編集画面
@@ -616,10 +617,9 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
               value: _isCore,
               onChanged: (v) => setState(() => _isCore = v),
             ),
-            SwitchListTile(
-              title: const Text('完成（開発者確認済み）'),
-              subtitle: const Text('AI 生成などのカードを、内容確認済みとしてマークします'),
+            DevCompletionSegmented(
               value: _devCompleted,
+              enabled: !_saving && !_loadingQuestion,
               onChanged: (v) => setState(() => _devCompleted = v),
             ),
             const SizedBox(height: 32),

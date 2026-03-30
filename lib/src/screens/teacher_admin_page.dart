@@ -13,7 +13,6 @@ import 'four_choice_list_screen.dart';
 import 'knowledge_list_screen.dart';
 import 'learner_management_screen.dart';
 import 'settings_screen.dart';
-import 'study_time_summary_screen.dart';
 import 'subject_picker_page.dart';
 
 /// 教師（管理者）向け管理画面
@@ -38,10 +37,6 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
   bool _loading = false;
   String? _error;
   List<Map<String, dynamic>> _subjects = [];
-
-  /// 勉強時間セッションは Windows デスクトップの教師用管理からのみ開く（モバイルの学習状況メニューには出さない）。
-  bool get _showStudyTimeSummaryMenu =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
   @override
   void initState() {
@@ -558,26 +553,6 @@ class _TeacherAdminPageState extends State<TeacherAdminPage> {
                           );
                         },
                       ),
-                      if (_showStudyTimeSummaryMenu) ...[
-                        const Divider(height: 1),
-                        ListTile(
-                          leading: const Icon(Icons.timer_outlined),
-                          title: const Text('勉強時間（セッション一覧）'),
-                          subtitle: const Text(
-                            '直近7日の合計・内訳・最近のセッション（ローカルDB）',
-                          ),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (context) => StudyTimeSummaryScreen(
-                                  localDatabase: widget.localDatabase,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ],
                     ],
                   ),
           ),

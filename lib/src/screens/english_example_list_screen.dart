@@ -175,26 +175,42 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
                 .order('display_order', ascending: true)
                 .order('created_at', ascending: true);
 
+      const selectEnglishExamplesBase =
+          'id, knowledge_id, front_ja, back_en, explanation, supplement, prompt_supplement, display_order, '
+          'knowledge:knowledge_id(id, content, unit, display_order, created_at)';
+      Future<List<dynamic>> fetchEnglishExampleRows(String fields) async {
+        if (widget.subjectId == null) {
+          return await _client
+              .from('english_examples')
+              .select(fields)
+              .order('display_order', ascending: true)
+              .order('created_at', ascending: true);
+        }
+        return await _client
+            .from('english_examples')
+            .select(fields)
+            .eq('knowledge.subject_id', widget.subjectId!)
+            .order('display_order', ascending: true)
+            .order('created_at', ascending: true);
+      }
+
       List<Map<String, dynamic>> examples = [];
       try {
-        final rows = widget.subjectId == null
-            ? await _client
-                  .from('english_examples')
-                  .select(
-                    'id, knowledge_id, front_ja, back_en, explanation, supplement, prompt_supplement, display_order, '
-                    'knowledge:knowledge_id(id, content, unit, display_order, created_at)',
-                  )
-                  .order('display_order', ascending: true)
-                  .order('created_at', ascending: true)
-            : await _client
-                  .from('english_examples')
-                  .select(
-                    'id, knowledge_id, front_ja, back_en, explanation, supplement, prompt_supplement, display_order, '
-                    'knowledge:knowledge_id(id, content, unit, display_order, created_at)',
-                  )
-                  .eq('knowledge.subject_id', widget.subjectId!)
-                  .order('display_order', ascending: true)
-                  .order('created_at', ascending: true);
+        dynamic rows;
+        try {
+          rows = await fetchEnglishExampleRows(
+            selectEnglishExamplesBase.replaceFirst(
+              'display_order, ',
+              'display_order, dev_completed, ',
+            ),
+          );
+        } on PostgrestException catch (e) {
+          if (e.code == '42703' && e.message.contains('dev_completed')) {
+            rows = await fetchEnglishExampleRows(selectEnglishExamplesBase);
+          } else {
+            rethrow;
+          }
+        }
         examples = List<Map<String, dynamic>>.from(rows);
         sortEnglishExampleRowsLikeKnowledgeList(examples);
       } on PostgrestException catch (e) {
@@ -298,8 +314,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
           MaterialPageRoute<void>(
             builder: (context) => EnglishExampleSolveScreen(
               examples: examples,
-              subjectName: widget.subjectName ??
-                  (_readAloudMenuOnly ? '読み上げ' : null),
+              subjectName: widget.subjectName,
               sessionDescriptor: sessionDescriptor,
               initialStates: initialStates,
             ),
@@ -511,6 +526,30 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   // 教師向け編集・削除
   // ──────────────────────────────
 
+  Future<void> _persistEnglishExampleRow(
+    Map<String, dynamic>? current,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      if (current == null) {
+        await _client.from('english_examples').insert(payload);
+      } else {
+        await _client.from('english_examples').update(payload).eq('id', current['id']);
+      }
+    } on PostgrestException catch (e) {
+      if (e.code == '42703' && e.message.contains('dev_completed')) {
+        payload.remove('dev_completed');
+        if (current == null) {
+          await _client.from('english_examples').insert(payload);
+        } else {
+          await _client.from('english_examples').update(payload).eq('id', current['id']);
+        }
+      } else {
+        rethrow;
+      }
+    }
+  }
+
   Future<void> _openEditor({
     Map<String, dynamic>? current,
     String? presetKnowledgeId,
@@ -551,14 +590,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
         final payload = outcome.savePayload;
         if (payload == null) return;
         try {
-          if (current == null) {
-            await _client.from('english_examples').insert(payload);
-          } else {
-            await _client
-                .from('english_examples')
-                .update(payload)
-                .eq('id', current['id']);
-          }
+          await _persistEnglishExampleRow(current, Map<String, dynamic>.from(payload));
           if (!mounted) return;
           await _load();
           messenger.showSnackBar(
@@ -636,13 +668,10 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final learnerReadAloudBase = _readAloudMenuOnly
-        ? (widget.subjectName == null || widget.subjectName!.isEmpty
-              ? '読み上げ'
-              : '${widget.subjectName} · 読み上げ')
-        : (widget.subjectName == null || widget.subjectName!.isEmpty
-              ? '例文読み上げ'
-              : '${widget.subjectName} · 例文読み上げ');
+    final learnerReadAloudBase =
+        widget.subjectName == null || widget.subjectName!.isEmpty
+        ? '例文読み上げ'
+        : '${widget.subjectName} · 例文読み上げ';
     final learnerCompositionBase =
         widget.subjectName == null || widget.subjectName!.isEmpty
         ? '英作文出題'

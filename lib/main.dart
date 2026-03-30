@@ -19,7 +19,6 @@ import 'src/init_sqflite_stub.dart' if (dart.library.io) 'src/init_sqflite_io.da
 import 'src/services/study_timer_service.dart';
 import 'src/sync/sync_engine.dart';
 import 'src/widgets/force_sync_icon_button.dart';
-import 'src/widgets/learner_streak_strip.dart';
 import 'src/widgets/study_time_user_activity_scope.dart';
 import 'src/screens/english_example_list_screen.dart';
 import 'src/screens/knowledge_db_home_page.dart';
@@ -418,6 +417,7 @@ class _RootAppState extends State<RootApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Tessera',
+      navigatorKey: appNavigatorKey,
       theme: _buildLightTheme(),
       darkTheme: _buildDarkTheme(),
       themeMode: _themeMode,
@@ -433,6 +433,10 @@ class _RootAppState extends State<RootApp> {
 }
 
 final _rootScaffoldKey = GlobalKey<_RootScaffoldState>();
+
+/// 設定画面などを push したあとログアウトすると、ルートだけがログインゲートに切り替わり
+/// 上に残ったルートで画面が覆われたままになるのを防ぐ。
+final appNavigatorKey = GlobalKey<NavigatorState>();
 
 enum _LoginGateMode { choose, learner, teacher }
 
@@ -530,6 +534,12 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
     if (!appAuthNotifier.isLoggedIn) {
       _loginGateMode = _LoginGateMode.choose;
       _postLoginSubjectsCheck = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final nav = appNavigatorKey.currentState;
+        if (nav != null && nav.canPop()) {
+          nav.popUntil((route) => route.isFirst);
+        }
+      });
     }
     if (mounted) _refreshRole();
     // モバイル/デスクトップ: ログイン後に同期を1回走らせ、ローカルに subjects/knowledge を入れる（知識DBタブがローカル参照のため）
@@ -608,14 +618,7 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
   }
 
   /// 学習者向け：モバイルは5タブのボトムナビ、デスクトップ学習タブは左レール（英作文を6項目目で直接表示）
-  ///
-  /// [embedStreakLaunchEffects] false: デスクトップ親が [LearnerStreakLaunchEffects] を出すとき（二重実行防止）
-  /// [offerStreakDailyGreeting] false: 内側プレビュー用。当日初回 SnackBar は外側だけ。
-  Widget _buildLearnerRoot({
-    bool desktopLearnerSideNav = false,
-    bool embedStreakLaunchEffects = true,
-    bool offerStreakDailyGreeting = true,
-  }) {
+  Widget _buildLearnerRoot({bool desktopLearnerSideNav = false}) {
     final tabs = <Widget>[
       const LearnerReviewTab(),
       LearnerLearningStatusMenuScreen(localDatabase: widget.localDatabase),
@@ -638,13 +641,7 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
     }
     final body = Column(
       children: [
-        if (embedStreakLaunchEffects && _postLoginSubjectsCheck != null)
-          _buildSubjectsCheckBanner(),
-        if (embedStreakLaunchEffects)
-          LearnerStreakLaunchEffects(
-            localDatabase: widget.localDatabase,
-            offerDailyGreeting: offerStreakDailyGreeting,
-          ),
+        if (_postLoginSubjectsCheck != null) _buildSubjectsCheckBanner(),
         Expanded(child: tabs[safeLearnerIndex]),
       ],
     );
@@ -771,10 +768,7 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
     if (!appAuthNotifier.isLoggedIn) {
       return const LearnerLoginScreen();
     }
-    return _buildLearnerRoot(
-      desktopLearnerSideNav: true,
-      embedStreakLaunchEffects: false,
-    );
+    return _buildLearnerRoot(desktopLearnerSideNav: true);
   }
 
   /// Windows / macOS / Linux のみナビに出す。学習メニューをスマホ相当幅で確認する。
@@ -940,10 +934,6 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
       body: Column(
         children: [
           if (_postLoginSubjectsCheck != null) _buildSubjectsCheckBanner(),
-          if (_index != 3)
-            LearnerStreakLaunchEffects(
-              localDatabase: widget.localDatabase,
-            ),
           Expanded(child: pages[_index]),
         ],
       ),
@@ -1211,16 +1201,6 @@ Future<Database> _initLocalDb() async {
       }
       if (oldVersion < 12) {
         await createEnglishExampleStateTables(db);
-      }
-      if (oldVersion < 13) {
-        final cols = await db.rawQuery("PRAGMA table_info('study_sessions')");
-        final hasLearnerId =
-            cols.any((c) => c['name']?.toString() == 'learner_id');
-        if (!hasLearnerId && cols.isNotEmpty) {
-          await db.execute(
-            'ALTER TABLE study_sessions ADD COLUMN learner_id TEXT',
-          );
-        }
       }
     },
     onOpen: (db) async {

@@ -1,7 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 /// ローカルDBのバージョン（双方向同期用スキーマ）
-const int kLocalDbVersion = 13;
+const int kLocalDbVersion = 12;
 
 /// 勉強時間セッション（ローカル + SyncEngine から Supabase へ Push / Pull）
 Future<void> createStudySessionsTable(Database db) async {
@@ -23,8 +23,7 @@ Future<void> createStudySessionsTable(Database db) async {
       started_at    TEXT NOT NULL,
       ended_at      TEXT,
       duration_sec  INTEGER,
-      created_at    TEXT NOT NULL,
-      learner_id    TEXT
+      created_at    TEXT NOT NULL
     )
   ''');
   await db.execute(

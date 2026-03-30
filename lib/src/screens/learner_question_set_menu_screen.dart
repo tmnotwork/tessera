@@ -10,42 +10,45 @@ class LearnerQuestionSetMenuScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('問題集'),
-      ),
-      body: ListView(
-        children: [
-          ListTile(
-            leading: const Icon(Icons.quiz_outlined),
-            title: const Text('四択'),
-            subtitle: const Text('四択問題に挑戦'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.of(context).push<void>(
-                MaterialPageRoute<void>(
-                  builder: (context) => const LearnerFourChoiceSolveScreen(),
-                ),
-              );
-            },
+      appBar: AppBar(title: const Text('問題集')),
+      body: Theme(
+        data: Theme.of(context).copyWith(
+          listTileTheme: const ListTileThemeData(
+            titleAlignment: ListTileTitleAlignment.center,
           ),
-          const Divider(height: 1),
-          ListTile(
-            leading: const Icon(Icons.edit_note),
-            title: const Text('英作文'),
-            subtitle: const Text('チャプターから英作文練習'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.of(context).push<void>(
-                MaterialPageRoute<void>(
-                  builder: (context) => const EnglishExampleListScreen(
-                    isLearnerMode: true,
-                    compositionMenuOnly: true,
+        ),
+        child: ListView(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.quiz_outlined),
+              title: const Text('四択'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (context) => const LearnerFourChoiceSolveScreen(),
                   ),
-                ),
-              );
-            },
-          ),
-        ],
+                );
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.edit_note),
+              title: const Text('英作文'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (context) => const EnglishExampleListScreen(
+                      isLearnerMode: true,
+                      compositionMenuOnly: true,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
