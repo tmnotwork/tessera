@@ -111,10 +111,11 @@ void main() async {
     (
       knowledgeTitle: 'If節のない仮定法：with / without / but for',
       questionText: r'_____ your help, I would have failed.',
-      choices: ['With', 'Without', 'For', 'If'],
+      choices: ['Under', 'Without', 'Because', 'If'],
       correctIndex: 1,
-      explanation: '「～がなければ」は without または but for。主節が would have failed なので過去の妄想。'
-          'Without your help = If I had not had your help。したがって (B) Without。With は「あれば」で意味が反対。',
+      explanation: '空欄の直後は名詞句 your help。Under your help は英語として自然なコロケーションにならない（under guidance などはあるが help とは組み合わせない）。'
+          'Because／If のあとには主語＋動詞の節が来るのが基本で、your help だけでは節にならず文として成立しにくい。'
+          '前置詞 Without だけが名詞句とつながり「〜がない状態を条件に」という用法になる。Without your help = If I had not had your help。',
     ),
     (
       knowledgeTitle: 'If節のない仮定法：ifの代用になるto不定詞（副詞用法）',
@@ -129,8 +130,9 @@ void main() async {
       questionText: r'_____ his story would be foolish.',
       choices: ['Believing', 'Believe', 'To believe', 'If we believe'],
       correctIndex: 2,
-      explanation: 'to不定詞の名詞用法が主語になり、if の代用として「仮に～したら」のニュアンスを表す。To believe his story = 彼の話を信じること。'
-          'したがって (C) To believe。Believing は動名詞でこの構文のポイントではない。Believe は動詞のみで文にならない。If we believe は to不定詞名詞用法の形ではない。',
+      explanation: 'この単元で問うのは、主語の位置に置ける to不定詞の名詞用法（To believe his story ＝「彼の話を信じること」）です。後ろの would be foolish と組み合わせて「（もし）そうしたら愚かだ」という評価を表す型で、模範は To believe です。'
+          'Believing（動名詞）も「〜すること」で主語になり得ますが、(1) この文型の教科書・受験での定番は不定詞、(2) 特定の行為に対する道徳・合理性の評価では不定詞主語が動名詞より好まれることが多い、のため本問の正解は To believe に限定されます。'
+          'Believe だけでは主語になれず、この位置では非述語動詞の形として不適。If we believe は接続詞 if の節になり、名詞句主語＋would の形ではない。',
     ),
   ];
 

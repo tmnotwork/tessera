@@ -80,7 +80,7 @@ class _LearnerLoginScreenState extends State<LearnerLoginScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Tessera',
+                  'スキマ・スタート',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                         fontWeight: FontWeight.bold,

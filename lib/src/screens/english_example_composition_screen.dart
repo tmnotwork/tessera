@@ -149,7 +149,7 @@ class _EnglishExampleCompositionScreenState extends State<EnglishExampleComposit
             exampleId: _current.id,
             answerCorrect: ok,
           );
-          unawaited(SyncEngine.instance.pushDirtyEnglishExampleStatesIfOnline());
+          await SyncEngine.instance.syncIfOnline();
         } catch (e, st) {
           if (kDebugMode) {
             debugPrint('EnglishExampleCompositionScreen local save: $e\n$st');

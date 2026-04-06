@@ -81,7 +81,7 @@ String _typeLabel(String t) {
     case 'knowledge':
       return '知識カード';
     case 'english_example':
-      return '例文読み上げ';
+      return '読み上げ';
     case 'english_example_composition':
       return '英作文';
     case 'memorization':

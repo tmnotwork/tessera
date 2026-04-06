@@ -1,4 +1,4 @@
-﻿import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -316,12 +316,17 @@ class _FourChoiceProgressScreenState extends State<FourChoiceProgressScreen> wit
               for (final item in entry.value)
                 InkWell(
                   onTap: () async {
+                    final chapterIds = entry.value
+                        .map((t) => t.questionId)
+                        .toList();
+                    final initialIndex = chapterIds.indexOf(item.questionId);
                     await Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (context) => QuestionSolveScreen(
-                          questionIds: [item.questionId],
+                          questionIds: chapterIds,
                           knowledgeTitle: entry.key,
                           isLearnerMode: true,
+                          initialIndex: initialIndex >= 0 ? initialIndex : 0,
                         ),
                       ),
                     );

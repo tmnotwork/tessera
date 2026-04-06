@@ -36,10 +36,10 @@ Map<String, dynamic> _localQuestionLearningRowToUiState(Map<String, dynamic> r) 
   };
 }
 
-/// 復習モード: 学習状況（四択・例文読み上げ・英作文の進捗画面）で赤タイルになる項目をまとめて出題する画面。
+/// 復習モード: 学習状況（四択・読み上げ・英作文の進捗画面）で赤タイルになる項目をまとめて出題する画面。
 ///
 /// - 四択: [KnowledgeLearnerMemStatus.triForMcqItem] が要復習（直近不正解 or 復習期限切れ）
-/// - 例文読み上げ: [KnowledgeLearnerMemStatus.triForExampleItem] が要復習（進捗画面と同じ）
+/// - 読み上げ: [KnowledgeLearnerMemStatus.triForExampleItem] が要復習（進捗画面と同じ）
 /// - 英作文: [KnowledgeLearnerMemStatus.triForCompositionItem] が要復習（直近の英作文が不正解）
 class ReviewModeScreen extends StatefulWidget {
   const ReviewModeScreen({super.key});
@@ -193,7 +193,7 @@ class _ReviewModeScreenState extends State<ReviewModeScreen> {
     }
   }
 
-  /// 例文読み上げ・英作文の要復習を、例文一覧1回取得でまとめて計算する。
+  /// 読み上げ・英作文の要復習を、例文一覧1回取得でまとめて計算する。
   Future<void> _loadExampleDerivedReviews() async {
     final learnerId = _learnerId;
     if (learnerId == null) {
@@ -236,7 +236,7 @@ class _ReviewModeScreenState extends State<ReviewModeScreen> {
     }
   }
 
-  /// 例文読み上げ: hybrid 状態で [KnowledgeLearnerMemStatus.triForExampleItem]。
+  /// 読み上げ: hybrid 状態で [KnowledgeLearnerMemStatus.triForExampleItem]。
   Future<void> _applyReadingReviewAfterFetch(
     String learnerId,
     List<Map<String, dynamic>> exampleRows,
@@ -434,21 +434,18 @@ class _ReviewModeScreenState extends State<ReviewModeScreen> {
             ),
           ] else ...[
             _ReviewCard(
-              icon: Icons.quiz_outlined,
               title: '四択問題',
               count: _wrongQuestionIds.length,
               onStart: _wrongQuestionIds.isEmpty ? null : _startQuestionReview,
             ),
             const SizedBox(height: 16),
             _ReviewCard(
-              icon: Icons.record_voice_over_outlined,
-              title: '例文読み上げ',
+              title: '読み上げ',
               count: _wrongExamples.length,
               onStart: _wrongExamples.isEmpty ? null : _startExampleReview,
             ),
             const SizedBox(height: 16),
             _ReviewCard(
-              icon: Icons.edit_note_outlined,
               title: '英作文',
               count: _wrongCompositionExamples.length,
               onStart: _wrongCompositionExamples.isEmpty
@@ -462,16 +459,14 @@ class _ReviewModeScreenState extends State<ReviewModeScreen> {
   }
 }
 
-/// 各モードの復習カード UI。
+/// 各モードの復習カード UI（左: メニュー名、右: 件数。件数があれば行タップで開始）。
 class _ReviewCard extends StatelessWidget {
   const _ReviewCard({
-    required this.icon,
     required this.title,
     required this.count,
     required this.onStart,
   });
 
-  final IconData icon;
   final String title;
   final int count;
   final VoidCallback? onStart;
@@ -480,6 +475,12 @@ class _ReviewCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final hasItems = count > 0;
+    final countStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w600,
+          color: hasItems
+              ? Colors.red.shade700
+              : scheme.onSurfaceVariant,
+        );
 
     return Card(
       elevation: 0,
@@ -487,61 +488,17 @@ class _ReviewCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(color: scheme.outlineVariant),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: hasItems
-                    ? Colors.red.shade50
-                    : Colors.green.shade50,
-                borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        title: Text(
+          title,
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w600,
               ),
-              child: Icon(
-                icon,
-                size: 24,
-                color: hasItems ? Colors.red.shade400 : Colors.green.shade400,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    hasItems ? '復習対象: $count 件' : '復習対象なし',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: hasItems
-                              ? Colors.red.shade600
-                              : Colors.green.shade600,
-                        ),
-                  ),
-                ],
-              ),
-            ),
-            if (hasItems)
-              FilledButton(
-                onPressed: onStart,
-                child: const Text('復習する'),
-              )
-            else
-              Icon(
-                Icons.check_circle,
-                color: Colors.green.shade400,
-                size: 28,
-              ),
-          ],
         ),
+        trailing: Text('$count件', style: countStyle),
+        onTap: hasItems ? onStart : null,
       ),
     );
   }

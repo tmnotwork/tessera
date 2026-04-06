@@ -19,6 +19,7 @@ import 'src/init_sqflite_stub.dart' if (dart.library.io) 'src/init_sqflite_io.da
 import 'src/services/study_timer_service.dart';
 import 'src/sync/sync_engine.dart';
 import 'src/widgets/force_sync_icon_button.dart';
+import 'src/widgets/learner_streak_strip.dart';
 import 'src/widgets/study_time_user_activity_scope.dart';
 import 'src/screens/english_example_list_screen.dart';
 import 'src/screens/knowledge_db_home_page.dart';
@@ -87,8 +88,9 @@ Future<void> main() async {
     final localDatabase = LocalDatabase(db);
     SyncEngine.init(localDatabase);
     // 未ログインで sync すると RLS により Pull が空/失敗しやすい。セッション復元済みのときだけ起動時同期。
+    // runApp をブロックしないよう非同期で開始。完了は RootScaffold の [_syncOnAppReady] でも待つ。
     if (Supabase.instance.client.auth.currentSession != null) {
-      SyncEngine.instance.syncIfOnline();
+      unawaited(SyncEngine.instance.syncIfOnline());
     }
     runApp(RootApp(localDb: db, localDatabase: localDatabase));
   }, (error, stack) {
@@ -416,7 +418,7 @@ class _RootAppState extends State<RootApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Tessera',
+      title: 'スキマ・スタート',
       navigatorKey: appNavigatorKey,
       theme: _buildLightTheme(),
       darkTheme: _buildDarkTheme(),
@@ -481,6 +483,14 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
     });
   }
 
+  /// 初回フレーム後にログイン済みなら Pull→Push を完了まで待つ（他端末の更新を取り込む）。
+  Future<void> _syncOnAppReady() async {
+    if (!mounted) return;
+    if (kIsWeb || !SyncEngine.isInitialized) return;
+    if (!appAuthNotifier.isLoggedIn) return;
+    await SyncEngine.instance.syncIfOnline();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -491,7 +501,7 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
     // その場合ログイン済みでも同期が一度も走らないため、1 フレーム後にログイン時だけ明示的に同期をかける。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _attemptCrossDeviceSyncOrDefer();
+      unawaited(_syncOnAppReady());
     });
     if (!kIsWeb && SyncEngine.isInitialized) {
       _connectivitySubscription = Connectivity().onConnectivityChanged.listen((result) {
@@ -642,6 +652,8 @@ class _RootScaffoldState extends State<RootScaffold> with WidgetsBindingObserver
     final body = Column(
       children: [
         if (_postLoginSubjectsCheck != null) _buildSubjectsCheckBanner(),
+        if (widget.localDatabase != null && !kIsWeb)
+          LearnerStreakLaunchEffects(localDatabase: widget.localDatabase!),
         Expanded(child: tabs[safeLearnerIndex]),
       ],
     );
@@ -1201,6 +1213,40 @@ Future<Database> _initLocalDb() async {
       }
       if (oldVersion < 12) {
         await createEnglishExampleStateTables(db);
+      }
+      if (oldVersion < 13) {
+        final cols = await db.rawQuery("PRAGMA table_info('study_sessions')");
+        final hasLearnerId =
+            cols.any((c) => c['name']?.toString() == 'learner_id');
+        if (!hasLearnerId && cols.isNotEmpty) {
+          await db.execute('ALTER TABLE study_sessions ADD COLUMN learner_id TEXT');
+        }
+      }
+      if (oldVersion < 14) {
+        final qCols = await db.rawQuery("PRAGMA table_info('local_questions')");
+        final hasReview = qCols.any((c) => c['name']?.toString() == 'dev_review_status');
+        if (!hasReview && qCols.isNotEmpty) {
+          await db.execute(
+            "ALTER TABLE local_questions ADD COLUMN dev_review_status TEXT NOT NULL DEFAULT 'pending'",
+          );
+          await db.execute('''
+            UPDATE local_questions
+            SET dev_review_status = CASE
+              WHEN dev_completed = 1 THEN 'completed'
+              ELSE 'pending'
+            END
+            WHERE dev_review_status = 'pending'
+          ''');
+        }
+      }
+      if (oldVersion < 15) {
+        try {
+          await db.execute(
+            "ALTER TABLE local_questions ALTER COLUMN dev_review_status SET DEFAULT 'blank'",
+          );
+        } catch (_) {
+          // SQLite が ALTER COLUMN SET DEFAULT 非対応の環境ではスキップ（保存時は常に値を明示する）
+        }
       }
     },
     onOpen: (db) async {

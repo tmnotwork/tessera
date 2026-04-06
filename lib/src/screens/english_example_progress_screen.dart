@@ -283,7 +283,7 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
       MaterialPageRoute<void>(
         builder: (context) => EnglishExampleSolveScreen(
           examples: [ex],
-          subjectName: '例文読み上げ',
+          subjectName: '読み上げ',
           initialStates: initial,
         ),
       ),
@@ -293,7 +293,7 @@ class _EnglishExampleProgressScreenState extends State<EnglishExampleProgressScr
 
   @override
   Widget build(BuildContext context) {
-    const title = '例文読み上げの学習状況';
+    const title = '読み上げの学習状況';
 
     if (_loading) {
       return Scaffold(

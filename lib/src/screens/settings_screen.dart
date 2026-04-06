@@ -1,11 +1,30 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../app_scope.dart';
+import '../widgets/force_sync_icon_button.dart';
 import 'tts_setting_screen.dart';
 
 /// アプリ設定画面（ダークモードなど）
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _syncing = false;
+
+  Future<void> _onForceDatabaseSync() async {
+    if (_syncing) return;
+    setState(() => _syncing = true);
+    try {
+      await runForceDatabaseSync(context);
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -66,6 +85,37 @@ class SettingsScreen extends StatelessWidget {
                 builder: (context) => const TtsSettingScreen(),
               ),
             ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 24, 16, 8),
+            child: Text(
+              'データ',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          ListTile(
+            leading: Icon(
+              Icons.storage_outlined,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            title: const Text('ローカルDBを強制同期'),
+            subtitle: Text(
+              kIsWeb
+                  ? 'Web ではローカル SQLite を使いません'
+                  : 'サーバーと Pull→Push して教材・学習状況を揃えます',
+            ),
+            trailing: _syncing
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.chevron_right),
+            onTap: kIsWeb || _syncing ? null : _onForceDatabaseSync,
           ),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 24, 16, 8),

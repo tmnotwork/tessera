@@ -7,6 +7,7 @@ import '../models/knowledge.dart';
 import '../repositories/knowledge_repository.dart';
 import '../services/knowledge_delete_flow.dart';
 import '../sync/knowledge_save_remote_status.dart';
+import '../widgets/dev_completion_segmented.dart';
 import '../widgets/edit_intents.dart';
 
 /// モバイル用の全画面編集画面
@@ -269,16 +270,16 @@ class _KnowledgeEditScreenState extends State<KnowledgeEditScreen> {
                   onSelected: (value) => setState(() => _construction = value),
                   selectedColor: scheme.surfaceContainerHighest,
                 ),
-                FilterChip(
-                  label: const Text('完成'),
-                  selected: _devCompleted,
-                  onSelected: (value) => setState(() => _devCompleted = value),
-                  tooltip: '開発者が内容を確認済み',
-                  selectedColor: scheme.surfaceContainerHighest,
-                ),
               ],
             ),
           ),
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0, bottom: 4.0),
+              child: DevCompletionSegmented(
+                value: _devCompleted,
+                onChanged: (v) => setState(() => _devCompleted = v),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.only(top: 4.0, bottom: 8.0),
               child: Wrap(

@@ -50,3 +50,32 @@ int minKnowledgeDisplayOrderInChapter(Iterable<Map<String, dynamic>> rows) {
   }
   return m;
 }
+
+/// [english_examples] 行（knowledge 埋め込み付き）のチャプター名。知識一覧の unit と同じ。
+String englishExampleChapterKeyFromRow(Map<String, dynamic> item) {
+  final k = item['knowledge'];
+  if (k is Map<String, dynamic>) {
+    final u = k['unit']?.toString().trim();
+    if (u != null && u.isNotEmpty) return u;
+  }
+  return '（単元なし）';
+}
+
+/// 例文をチャプターごとにまとめ、知識の display_order が早いチャプターを先に並べる。
+List<MapEntry<String, List<Map<String, dynamic>>>> groupEnglishExampleRowsByChapter(
+  List<Map<String, dynamic>> items,
+) {
+  final map = <String, List<Map<String, dynamic>>>{};
+  for (final item in items) {
+    final u = englishExampleChapterKeyFromRow(item);
+    map.putIfAbsent(u, () => []).add(item);
+  }
+  final entries = map.entries.toList()
+    ..sort((a, b) {
+      final c = minKnowledgeDisplayOrderInChapter(a.value)
+          .compareTo(minKnowledgeDisplayOrderInChapter(b.value));
+      if (c != 0) return c;
+      return a.key.compareTo(b.key);
+    });
+  return entries;
+}

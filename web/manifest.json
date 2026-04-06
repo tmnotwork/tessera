@@ -1,6 +1,6 @@
 {
-    "name": "learning_platform",
-    "short_name": "learning_platform",
+    "name": "スキマ・スタート",
+    "short_name": "スキマ・スタート",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

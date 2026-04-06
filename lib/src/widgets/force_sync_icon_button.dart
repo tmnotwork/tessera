@@ -4,6 +4,33 @@ import 'package:flutter/material.dart';
 import '../sync/sync_engine.dart';
 import '../sync/sync_notifier.dart';
 
+/// ローカル SQLite と Supabase の Pull→Push を実行する（設定画面のボタンなどからも利用）。
+///
+/// Web または [SyncEngine] 未初期化時は SnackBar のみ表示して終了する。
+Future<void> runForceDatabaseSync(BuildContext context) async {
+  if (kIsWeb || !SyncEngine.isInitialized) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(content: Text('この環境ではローカル同期（強制同期）は利用できません。')),
+    );
+    return;
+  }
+  await SyncEngine.instance.sync();
+  if (!context.mounted) return;
+  final failed = SyncNotifier.instance.state == SyncState.error;
+  final err = SyncNotifier.instance.lastError;
+  ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+    SnackBar(
+      content: Text(
+        failed && err != null
+            ? '同期に失敗しました: $err'
+            : '同期が完了しました（Pull → Push）',
+      ),
+      backgroundColor: failed ? Theme.of(context).colorScheme.errorContainer : null,
+    ),
+  );
+}
+
 /// ローカル DB と Supabase の Pull→Push を手動で実行する（非 Web のみ表示）。
 class ForceSyncIconButton extends StatefulWidget {
   const ForceSyncIconButton({super.key});
@@ -16,29 +43,9 @@ class _ForceSyncIconButtonState extends State<ForceSyncIconButton> {
   bool _busy = false;
 
   Future<void> _run() async {
-    if (kIsWeb || !SyncEngine.isInitialized) {
-      if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('この環境ではローカル同期（強制同期）は利用できません。')),
-      );
-      return;
-    }
     setState(() => _busy = true);
     try {
-      await SyncEngine.instance.sync();
-      if (!mounted) return;
-      final failed = SyncNotifier.instance.state == SyncState.error;
-      final err = SyncNotifier.instance.lastError;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(
-          content: Text(
-            failed && err != null
-                ? '同期に失敗しました: $err'
-                : '同期が完了しました（Pull → Push）',
-          ),
-          backgroundColor: failed ? Theme.of(context).colorScheme.errorContainer : null,
-        ),
-      );
+      await runForceDatabaseSync(context);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

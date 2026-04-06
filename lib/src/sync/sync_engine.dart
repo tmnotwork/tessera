@@ -291,21 +291,34 @@ class SyncEngine {
           await _pullIncremental(client, lastPullAt);
         }
       } on PostgrestException catch (e) {
-        // deleted_at / updated_at 未追加のリモート（00014 未適用など）
-        final isMissingColumn = e.code == '42703' ||
-            (e.message.contains('does not exist') &&
-                (e.message.contains('deleted_at') ||
-                    e.message.contains('updated_at') ||
-                    e.message.contains('dev_completed')));
-        if (isMissingColumn && !_useLegacyCols) {
-          _useLegacyCols = true;
+        // dev_review_status 未追加のリモート
+        final isMissingDevReview = e.code == '42703' ||
+            (e.message.contains('does not exist') && e.message.contains('dev_review_status'));
+        if (isMissingDevReview && !_useQuestionsWithoutReviewStatus) {
+          _useQuestionsWithoutReviewStatus = true;
           if (lastPullAt == null || lastPullAt.isEmpty) {
             await _pullAll(client, pullStartAt);
           } else {
             await _pullIncremental(client, lastPullAt);
           }
         } else {
-          rethrow;
+          // deleted_at / updated_at 未追加のリモート（00014 未適用など）
+          final isMissingColumn = e.code == '42703' ||
+              (e.message.contains('does not exist') &&
+                  (e.message.contains('deleted_at') ||
+                      e.message.contains('updated_at') ||
+                      e.message.contains('dev_completed')));
+          if (isMissingColumn && !_useLegacyCols) {
+            _useLegacyCols = true;
+            _useQuestionsWithoutReviewStatus = false;
+            if (lastPullAt == null || lastPullAt.isEmpty) {
+              await _pullAll(client, pullStartAt);
+            } else {
+              await _pullIncremental(client, lastPullAt);
+            }
+          } else {
+            rethrow;
+          }
         }
       }
 
@@ -405,6 +418,21 @@ class SyncEngine {
     'deleted_at',
   ];
   static const _memorizationCardCols = ['id', 'subject_id', 'knowledge_id', 'unit', 'front_content', 'back_content', 'display_order', 'created_at', 'updated_at', 'deleted_at'];
+  /// dev_review_status 未追加のリモート用（Pull 列セット）
+  static const _questionColsPreReview = [
+    'id',
+    'knowledge_id',
+    'question_type',
+    'question_text',
+    'correct_answer',
+    'explanation',
+    'reference',
+    'choices',
+    'dev_completed',
+    'created_at',
+    'updated_at',
+    'deleted_at',
+  ];
   static const _questionCols = [
     'id',
     'knowledge_id',
@@ -415,6 +443,7 @@ class SyncEngine {
     'reference',
     'choices',
     'dev_completed',
+    'dev_review_status',
     'created_at',
     'updated_at',
     'deleted_at',
@@ -511,11 +540,14 @@ class SyncEngine {
   static const _memorizationTagCols = ['id', 'name', 'created_at'];
 
   bool _useLegacyCols = false;
+  bool _useQuestionsWithoutReviewStatus = false;
 
   List<String> get _effectiveSubjectCols => _useLegacyCols ? _subjectColsLegacy : _subjectCols;
   List<String> get _effectiveKnowledgeCols => _useLegacyCols ? _knowledgeColsLegacy : _knowledgeCols;
   List<String> get _effectiveMemorizationCardCols => _useLegacyCols ? _memorizationCardColsLegacy : _memorizationCardCols;
-  List<String> get _effectiveQuestionCols => _useLegacyCols ? _questionColsLegacy : _questionCols;
+  List<String> get _effectiveQuestionCols => _useLegacyCols
+      ? _questionColsLegacy
+      : (_useQuestionsWithoutReviewStatus ? _questionColsPreReview : _questionCols);
   List<String> get _effectiveQuestionChoiceCols => _useLegacyCols ? _questionChoiceColsLegacy : _questionChoiceCols;
 
   /// Pull の並び・増分フィルタに使う時刻列（リモートに `updated_at` が無いテーブルは `created_at`）。
@@ -1083,8 +1115,15 @@ class SyncEngine {
       map['explanation'] = remote['explanation'];
       map['reference'] = remote['reference'];
       map['choices'] = remote['choices']?.toString();
-      map['dev_completed'] =
-          (remote['dev_completed'] == true || remote['dev_completed'] == 1) ? 1 : 0;
+      final rs = remote['dev_review_status']?.toString();
+      final String status;
+      if (rs == 'blank' || rs == 'pending' || rs == 'completed') {
+        status = rs!;
+      } else {
+        status = (remote['dev_completed'] == true || remote['dev_completed'] == 1) ? 'completed' : 'pending';
+      }
+      map['dev_review_status'] = status;
+      map['dev_completed'] = status == 'completed' ? 1 : 0;
     } else if (remoteTable == 'question_choices') {
       map['position'] = remote['position'] ?? 0;
       map['choice_text'] = remote['choice_text'] ?? '';
@@ -1132,6 +1171,7 @@ class SyncEngine {
     } else if (remoteTable == 'knowledge_tags' || remoteTable == 'memorization_tags') {
       map['name'] = remote['name'] ?? '';
     } else if (remoteTable == 'study_sessions') {
+      map['learner_id'] = remote['learner_id']?.toString() ?? '';
       map['session_type'] = remote['session_type']?.toString() ?? '';
       map['content_id'] = remote['content_id']?.toString();
       map['content_title'] = remote['content_title']?.toString();
@@ -1467,6 +1507,10 @@ class SyncEngine {
     if (knowledgeSupabaseId == null || knowledgeSupabaseId.isEmpty) return;
 
     final supabaseId = row['supabase_id'] as String?;
+    final rawStatus = row['dev_review_status']?.toString();
+    final status = (rawStatus == 'blank' || rawStatus == 'pending' || rawStatus == 'completed')
+        ? rawStatus!
+        : ((row['dev_completed'] == true || row['dev_completed'] == 1) ? 'completed' : 'pending');
     final payload = {
       'knowledge_id': knowledgeSupabaseId,
       'question_type': row['question_type'] ?? 'text_input',
@@ -1475,7 +1519,8 @@ class SyncEngine {
       'explanation': row['explanation'],
       'reference': row['reference'],
       'choices': row['choices'],
-      'dev_completed': row['dev_completed'] == true || row['dev_completed'] == 1,
+      'dev_completed': status == 'completed',
+      'dev_review_status': status,
     };
     if (supabaseId == null || supabaseId.isEmpty) {
       final inserted = await client.from('questions').insert(payload).select('id').single();

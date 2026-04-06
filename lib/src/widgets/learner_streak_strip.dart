@@ -9,12 +9,14 @@ import '../repositories/streak_repository.dart';
 import '../sync/ensure_synced_for_local_read.dart';
 import 'streak_celebration_dialog.dart';
 
-/// 同一アプリセッション内で連続学習の起動時処理を二度走らせない（タブ切替でウィジェットが付け替わる対策）。
+/// 同一アプリセッション内で起動時ストリーク処理を二度走らせない（タブ切替等でウィジェットが付け替わる対策）。
 bool _learnerStreakLaunchSessionDone = false;
 
-/// レイアウトは持たず、マウント時1回だけ同期・連続学習日数の再計算・マイルストーン／当日案内を行う。
+/// 学習者シェル：起動時の再計算・[StreakCelebrationDialog]／当日初回 [StreakDailyGreetingDialog]。
+/// UI の常時バーは出さない（レイアウトは [SizedBox.shrink]）。
 ///
-/// 画面上部の常時バーは出さない（タブ切替や学習後の再読込もしない）。
+/// - [study_sessions] のローカル日付で連続日数を算出する（[StreakRepository]）。
+/// - アプリを跨日で開いたままにしても、[AppLifecycleState.resumed] で暦日が変われば再取得する。
 class LearnerStreakLaunchEffects extends StatefulWidget {
   const LearnerStreakLaunchEffects({
     super.key,
@@ -24,7 +26,7 @@ class LearnerStreakLaunchEffects extends StatefulWidget {
 
   final LocalDatabase? localDatabase;
 
-  /// 当日初回の SnackBar 案内（プレビュー内など二重表示を避けるとき false）
+  /// 当日初回の連続日数ダイアログ（プレビュー内など二重表示を避けるとき false）
   final bool offerDailyGreeting;
 
   @override
@@ -32,18 +34,63 @@ class LearnerStreakLaunchEffects extends StatefulWidget {
       _LearnerStreakLaunchEffectsState();
 }
 
-class _LearnerStreakLaunchEffectsState extends State<LearnerStreakLaunchEffects> {
+class _LearnerStreakLaunchEffectsState extends State<LearnerStreakLaunchEffects>
+    with WidgetsBindingObserver {
   bool _ran = false;
+  String? _lastKnownLocalDate;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _lastKnownLocalDate = StreakRepository.todayKeyLocal();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_runOnce());
+      if (mounted) unawaited(_runLaunchSequence());
     });
   }
 
-  Future<void> _runOnce() async {
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    if (kIsWeb || widget.localDatabase == null) return;
+    unawaited(_onResumeMaybeNewDay());
+  }
+
+  /// 日付をまたいでフォアグラウンドに戻ったとき、バッジ更新と「新しい一日」の案内を試みる。
+  Future<void> _onResumeMaybeNewDay() async {
+    final today = StreakRepository.todayKeyLocal();
+    final crossedMidnight =
+        _lastKnownLocalDate != null && _lastKnownLocalDate != today;
+    _lastKnownLocalDate = today;
+
+    final learnerId = Supabase.instance.client.auth.currentUser?.id;
+    if (learnerId == null || learnerId.isEmpty) return;
+
+    try {
+      await ensureSyncedForLocalRead();
+      if (!mounted) return;
+      final repo = StreakRepository(widget.localDatabase!.db);
+      // キャッシュではなく DB から再計算（起動直後と同じ連続日数に揃える）
+      final info = await repo.recompute(learnerId);
+      if (!mounted) return;
+
+      if (crossedMidnight && widget.offerDailyGreeting) {
+        await _showFirstLaunchOfDayGreetingIfNeeded(learnerId, info);
+      }
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('LearnerStreakLaunchEffects resume: $e\n$st');
+      }
+    }
+  }
+
+  Future<void> _runLaunchSequence() async {
     if (_ran) return;
     if (_learnerStreakLaunchSessionDone) return;
     if (kIsWeb || widget.localDatabase == null) return;
@@ -65,9 +112,9 @@ class _LearnerStreakLaunchEffectsState extends State<LearnerStreakLaunchEffects>
         await StreakCelebrationDialog.show(context, m);
         if (!mounted) return;
         await repo.markMilestoneCelebrated(learnerId, m);
-        await StreakRepository.markDailyGreetingShown(learnerId);
+        await StreakRepository.markDailyGreetingShown(learnerId, info.current);
       } else if (widget.offerDailyGreeting) {
-        unawaited(_showFirstLaunchOfDayGreetingIfNeeded(learnerId, info));
+        await _showFirstLaunchOfDayGreetingIfNeeded(learnerId, info);
       }
       _learnerStreakLaunchSessionDone = true;
     } catch (e, st) {
@@ -81,26 +128,25 @@ class _LearnerStreakLaunchEffectsState extends State<LearnerStreakLaunchEffects>
     String learnerId,
     StreakInfo info,
   ) async {
-    if (!await StreakRepository.shouldShowDailyGreeting(learnerId)) return;
+    if (!await StreakRepository.shouldShowDailyGreeting(
+          learnerId,
+          info.current,
+        )) {
+      return;
+    }
     if (!mounted) return;
-    await StreakRepository.markDailyGreetingShown(learnerId);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final messenger = ScaffoldMessenger.maybeOf(context);
-      if (messenger == null) return;
-      final msg = info.current > 0
-          ? '学習を ${info.current} 日連続で記録しています'
-          : '今日の学習を記録すると、連続日数が積み上がります';
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 5),
-        ),
-      );
-    });
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    await StreakDailyGreetingDialog.show(
+      context,
+      currentStreak: info.current,
+    );
+    if (!mounted) return;
+    await StreakRepository.markDailyGreetingShown(learnerId, info.current);
   }
 
   @override
-  Widget build(BuildContext context) => const SizedBox.shrink();
+  Widget build(BuildContext context) {
+    return const SizedBox.shrink();
+  }
 }

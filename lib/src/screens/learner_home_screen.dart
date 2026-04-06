@@ -252,15 +252,14 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
                 const SizedBox(height: 12),
                 _MenuCard(
                   icon: Icons.quiz,
-                  title: '四択問題を解く',
-                  subtitle: '四択クイズに挑戦する',
+                  title: '四択',
                   onTap: _openFourChoiceSolve,
                 ),
                 const SizedBox(height: 12),
                 _MenuCard(
                   icon: Icons.replay,
                   title: '復習モード',
-                  subtitle: '不正解の四択・例文読み上げ・英作文をまとめて復習',
+                  subtitle: '不正解の四択・読み上げ・英作文をまとめて復習',
                   onTap: _openReviewMode,
                 ),
                 const SizedBox(height: 12),
@@ -272,7 +271,7 @@ class _LearnerHomeScreenState extends State<LearnerHomeScreen> {
                 const SizedBox(height: 12),
                 _MenuCard(
                   icon: Icons.translate,
-                  title: '例文読み上げ',
+                  title: '読み上げ',
                   onTap: _openEnglishExamples,
                 ),
                 const SizedBox(height: 12),
@@ -419,7 +418,10 @@ class _LearnerSubjectPickerState extends State<_LearnerSubjectPicker> {
 
 /// 学習者向け：四択問題を解く画面（問題ID一覧 → 解く）
 class LearnerFourChoiceSolveScreen extends StatefulWidget {
-  const LearnerFourChoiceSolveScreen({super.key});
+  const LearnerFourChoiceSolveScreen({super.key, this.chapterKeyFilter});
+
+  /// 指定時はこのチャプター（知識の unit、空なら「（単元なし）」）の問題だけを表示する。
+  final String? chapterKeyFilter;
 
   @override
   State<LearnerFourChoiceSolveScreen> createState() =>
@@ -430,6 +432,8 @@ class _LearnerFourChoiceSolveScreenState
     extends State<LearnerFourChoiceSolveScreen>
     with RouteAware, WidgetsBindingObserver {
   List<String> _questionIds = [];
+  /// 「未回答・要復習」のみ。メインの一括出題用（要復習を先に）。
+  List<String> _priorityQuestionIds = [];
   Map<String, List<_QuestionTileItem>> _groupedTiles = {};
   final Set<String> _expandedChapters = {};
   bool _loading = true;
@@ -497,7 +501,42 @@ class _LearnerFourChoiceSolveScreenState
           .select('id, knowledge_id')
           .eq('question_type', 'multiple_choice')
           .order('created_at', ascending: false);
-      final allQuestionRows = List<Map<String, dynamic>>.from(allRows);
+      final rawQuestionRows = List<Map<String, dynamic>>.from(allRows);
+      final qIdsForJunction = rawQuestionRows
+          .map((r) => r['id']?.toString())
+          .whereType<String>()
+          .toList();
+      final junctionFirst = <String, String>{};
+      if (qIdsForJunction.isNotEmpty) {
+        try {
+          final jRows = await client
+              .from('question_knowledge')
+              .select('question_id, knowledge_id')
+              .inFilter('question_id', qIdsForJunction);
+          for (final raw in jRows as List) {
+            final r = raw as Map<String, dynamic>;
+            final qid = r['question_id']?.toString();
+            final kid = r['knowledge_id']?.toString();
+            if (qid != null &&
+                kid != null &&
+                kid.isNotEmpty &&
+                !junctionFirst.containsKey(qid)) {
+              junctionFirst[qid] = kid;
+            }
+          }
+        } catch (_) {}
+      }
+      final allQuestionRows = <Map<String, dynamic>>[];
+      for (final q in rawQuestionRows) {
+        final m = Map<String, dynamic>.from(q);
+        final qid = m['id']?.toString();
+        var kid = m['knowledge_id']?.toString();
+        if (kid == null || kid.isEmpty) {
+          kid = qid != null ? junctionFirst[qid] : null;
+          if (kid != null && kid.isNotEmpty) m['knowledge_id'] = kid;
+        }
+        allQuestionRows.add(m);
+      }
       final allQuestionIds = allQuestionRows
           .map((r) => r['id']?.toString())
           .where((id) => id != null && id.isNotEmpty)
@@ -595,6 +634,10 @@ class _LearnerFourChoiceSolveScreenState
           .where((id) => !dueSet.contains(id))
           .toList();
       final ordered = [...dueUnique, ...unseenOrNotDue];
+      final priorityQuestionIds = ordered.where((id) {
+        final st = _tileStatusFromState(stateByQuestion[id]);
+        return st == _TileStatus.unseen || st == _TileStatus.notRemembered;
+      }).toList();
       final grouped = <String, List<_QuestionTileItem>>{};
       for (final q in allQuestionRows) {
         final qid = q['id']?.toString();
@@ -640,7 +683,7 @@ class _LearnerFourChoiceSolveScreenState
         return m;
       }
 
-      final sortedGrouped = <String, List<_QuestionTileItem>>{};
+      var sortedGrouped = <String, List<_QuestionTileItem>>{};
       final keys = grouped.keys.toList()
         ..sort((a, b) {
           final c = chapterOrder(a).compareTo(chapterOrder(b));
@@ -651,11 +694,34 @@ class _LearnerFourChoiceSolveScreenState
         sortedGrouped[k] = grouped[k]!;
       }
 
+      var finalOrdered = ordered;
+      var finalPriority = priorityQuestionIds;
+      final filter = widget.chapterKeyFilter;
+      if (filter != null && filter.isNotEmpty) {
+        if (sortedGrouped.containsKey(filter)) {
+          final tiles = sortedGrouped[filter]!;
+          final idSet = tiles.map((t) => t.questionId).toSet();
+          sortedGrouped = {filter: tiles};
+          finalOrdered = ordered.where(idSet.contains).toList();
+          finalPriority = priorityQuestionIds.where(idSet.contains).toList();
+        } else {
+          sortedGrouped = {};
+          finalOrdered = [];
+          finalPriority = [];
+        }
+      }
+
       if (mounted) {
         setState(() {
-          _questionIds = ordered;
+          _questionIds = finalOrdered;
+          _priorityQuestionIds = finalPriority;
           _groupedTiles = sortedGrouped;
           _expandedChapters.removeWhere((k) => !sortedGrouped.containsKey(k));
+          if (filter != null &&
+              filter.isNotEmpty &&
+              sortedGrouped.containsKey(filter)) {
+            _expandedChapters.add(filter);
+          }
         });
       }
     } catch (e) {
@@ -666,12 +732,19 @@ class _LearnerFourChoiceSolveScreenState
   }
 
   void _startSolve() {
-    if (_questionIds.isEmpty) return;
+    if (_priorityQuestionIds.isEmpty) {
+      if (_questionIds.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('未回答・不正解の問題はありません。')),
+        );
+      }
+      return;
+    }
     Navigator.of(context)
         .push(
           MaterialPageRoute(
             builder: (context) => QuestionSolveScreen(
-              questionIds: _questionIds,
+              questionIds: _priorityQuestionIds,
               knowledgeTitle: '四択問題',
               isLearnerMode: true,
             ),
@@ -764,7 +837,11 @@ class _LearnerFourChoiceSolveScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('四択問題を解く'),
+        title: Text(
+          widget.chapterKeyFilter != null && widget.chapterKeyFilter!.isNotEmpty
+              ? '${widget.chapterKeyFilter} · 四択'
+              : '四択',
+        ),
         actions: [
           if (_showManageEdit)
             IconButton(
@@ -815,8 +892,12 @@ class _LearnerFourChoiceSolveScreenState
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    '四択問題がまだありません',
+                    widget.chapterKeyFilter != null &&
+                            widget.chapterKeyFilter!.isNotEmpty
+                        ? 'このチャプターには四択問題がありません'
+                        : '四択問題がまだありません',
                     style: Theme.of(context).textTheme.bodyLarge,
+                    textAlign: TextAlign.center,
                   ),
                 ],
               ),
@@ -829,7 +910,7 @@ class _LearnerFourChoiceSolveScreenState
                   child: FilledButton.icon(
                     onPressed: _startSolve,
                     icon: const Icon(Icons.play_arrow),
-                    label: const Text('全問題を解く'),
+                    label: const Text('未回答・不正解の問題を解く'),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -904,12 +985,19 @@ class _LearnerFourChoiceSolveScreenState
                             ),
                             trailing: _statusMark(context, item.status),
                             onTap: () async {
+                              final chapterIds =
+                                  tiles.map((t) => t.questionId).toList();
+                              final initialIndex = chapterIds.indexOf(
+                                item.questionId,
+                              );
                               await Navigator.of(context).push(
                                 MaterialPageRoute(
                                   builder: (context) => QuestionSolveScreen(
-                                    questionIds: [item.questionId],
-                                    knowledgeTitle: item.cardTitle,
+                                    questionIds: chapterIds,
+                                    knowledgeTitle: chapter,
                                     isLearnerMode: true,
+                                    initialIndex:
+                                        initialIndex >= 0 ? initialIndex : 0,
                                   ),
                                 ),
                               );

@@ -325,28 +325,7 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
 
   /// knowledge.unit（参考書チャプター）ごとにグループ化し、表示順の先頭が早い単元ほど上に並べる。
   List<MapEntry<String, List<Map<String, dynamic>>>> _chaptersOrdered() {
-    final map = <String, List<Map<String, dynamic>>>{};
-    for (final item in _items) {
-      final u = _unitKeyFromItem(item);
-      map.putIfAbsent(u, () => []).add(item);
-    }
-    final entries = map.entries.toList()
-      ..sort((a, b) {
-        final c = minKnowledgeDisplayOrderInChapter(a.value)
-            .compareTo(minKnowledgeDisplayOrderInChapter(b.value));
-        if (c != 0) return c;
-        return a.key.compareTo(b.key);
-      });
-    return entries;
-  }
-
-  static String _unitKeyFromItem(Map<String, dynamic> item) {
-    final k = item['knowledge'];
-    if (k is Map<String, dynamic>) {
-      final u = k['unit']?.toString().trim();
-      if (u != null && u.isNotEmpty) return u;
-    }
-    return '（単元なし）';
+    return groupEnglishExampleRowsByChapter(_items);
   }
 
   void _startReviewMode() {
@@ -475,49 +454,48 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
 
     final chapters = _chaptersOrdered();
 
-    final drillCount = _compositionDrillTargets.length;
-
     return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.fromLTRB(0, 16, 0, 24),
       children: [
-        ListTile(
-          title: const Text('未回答・不正解をまとめて'),
-          subtitle: Text(
-            _learnerId == null
-                ? 'ログインすると記録に基づいて絞り込みます'
-                : drillCount == 0
-                ? 'いまは対象がありません'
-                : '$drillCount 問',
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: FilledButton.icon(
+            onPressed: _loading ? null : _startCompositionDrillMode,
+            icon: const Icon(Icons.play_arrow),
+            label: const Text('未回答・不正解の問題を解く'),
           ),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: _loading ? null : _startCompositionDrillMode,
         ),
-        for (final e in chapters) ...[
-          const Divider(height: 1),
-          ListTile(
-            title: Text(e.key, maxLines: 2, overflow: TextOverflow.ellipsis),
-            subtitle: Text('${e.value.length} 問'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: _loading
-                ? null
-                : () {
-                    Navigator.of(context)
-                        .push<void>(
-                          MaterialPageRoute<void>(
-                            builder: (context) =>
-                                EnglishExampleCompositionChapterListScreen(
-                                  chapterTitle: e.key,
-                                  items: List<Map<String, dynamic>>.from(
-                                    e.value,
+        const SizedBox(height: 8),
+        ...chapters.asMap().entries.expand((me) {
+          final i = me.key;
+          final e = me.value;
+          return [
+            if (i > 0) const Divider(height: 1),
+            ListTile(
+              title: Text(e.key, maxLines: 2, overflow: TextOverflow.ellipsis),
+              subtitle: Text('${e.value.length} 問'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _loading
+                  ? null
+                  : () {
+                      Navigator.of(context)
+                          .push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (context) =>
+                                  EnglishExampleCompositionChapterListScreen(
+                                    chapterTitle: e.key,
+                                    items: List<Map<String, dynamic>>.from(
+                                      e.value,
+                                    ),
+                                    subjectName: widget.subjectName,
                                   ),
-                                  subjectName: widget.subjectName,
-                                ),
-                          ),
-                        )
-                        .then((_) => _load());
-                  },
-          ),
-        ],
+                            ),
+                          )
+                          .then((_) => _load());
+                    },
+            ),
+          ];
+        }),
       ],
     );
   }
@@ -670,8 +648,8 @@ class _EnglishExampleListScreenState extends State<EnglishExampleListScreen> {
   Widget build(BuildContext context) {
     final learnerReadAloudBase =
         widget.subjectName == null || widget.subjectName!.isEmpty
-        ? '例文読み上げ'
-        : '${widget.subjectName} · 例文読み上げ';
+        ? '読み上げ'
+        : '${widget.subjectName} · 読み上げ';
     final learnerCompositionBase =
         widget.subjectName == null || widget.subjectName!.isEmpty
         ? '英作文出題'

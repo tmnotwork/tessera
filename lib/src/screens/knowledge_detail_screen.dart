@@ -15,6 +15,7 @@ import '../services/knowledge_delete_flow.dart';
 import '../services/study_timer_service.dart';
 import '../sync/knowledge_save_remote_status.dart';
 import '../utils/platform_utils.dart';
+import '../widgets/dev_completion_segmented.dart';
 import '../widgets/edit_intents.dart';
 import '../widgets/explanation_text.dart';
 import '../sync/english_example_state_sync.dart';
@@ -910,17 +911,17 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                   },
                   selectedColor: scheme.surfaceContainerHighest,
                 ),
-                FilterChip(
-                  label: const Text('完成'),
-                  selected: _devCompleted,
-                  onSelected: (value) async {
-                    setState(() => _devCompleted = value);
-                    await _saveChanges(exitEditMode: false);
-                  },
-                  tooltip: '開発者が内容を確認済み',
-                  selectedColor: scheme.surfaceContainerHighest,
-                ),
               ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 8.0, bottom: 4.0),
+            child: DevCompletionSegmented(
+              value: _devCompleted,
+              onChanged: (v) async {
+                setState(() => _devCompleted = v);
+                await _saveChanges(exitEditMode: false);
+              },
             ),
           ),
           Padding(
@@ -1054,11 +1055,10 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                         label: const Text('構文'),
                         backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                       ),
-                    if (_devCompleted)
-                      Chip(
-                        label: const Text('完成'),
-                        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                      ),
+                    Chip(
+                      label: Text(_devCompleted ? '完成' : '要確認'),
+                      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    ),
                   ],
                 ),
               ),
@@ -1223,10 +1223,7 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
               children: [
                 if (widget.isLearnerMode)
                   _buildLearnerMemorizationBadges(context, knowledge)
-                else if (topic != null ||
-                    construction ||
-                    devCompleted ||
-                    tags.isNotEmpty)
+                else if (!widget.isLearnerMode)
                   Padding(
                     padding: const EdgeInsets.all(16.0),
                     child: Wrap(
@@ -1244,12 +1241,11 @@ class _KnowledgeDetailScreenState extends State<KnowledgeDetailScreen> {
                             backgroundColor:
                                 Theme.of(context).colorScheme.surfaceContainerHighest,
                           ),
-                        if (devCompleted)
-                          Chip(
-                            label: const Text('完成'),
-                            backgroundColor:
-                                Theme.of(context).colorScheme.surfaceContainerHighest,
-                          ),
+                        Chip(
+                          label: Text(devCompleted ? '完成' : '要確認'),
+                          backgroundColor:
+                              Theme.of(context).colorScheme.surfaceContainerHighest,
+                        ),
                         ...tags.map((t) => Chip(
                               label: Text(t),
                               backgroundColor:

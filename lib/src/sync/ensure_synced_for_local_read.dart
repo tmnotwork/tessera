@@ -18,8 +18,9 @@ Future<void> ensureSyncedForLocalRead() async {
 /// 画面の初期表示をブロックせず、必要なときだけ背景同期を起動する。
 ///
 /// [minInterval] 以内に Pull が終わっていればスキップする。
+/// 端末間で学習状況を揃えるため、既定はスキップなし（常に Pull→Push を試みる）。
 Future<void> triggerBackgroundSyncWithThrottle({
-  Duration minInterval = const Duration(seconds: 30),
+  Duration minInterval = Duration.zero,
 }) async {
   if (kIsWeb) return;
   if (!SyncEngine.isInitialized) return;

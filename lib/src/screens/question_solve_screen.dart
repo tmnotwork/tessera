@@ -21,12 +21,15 @@ class QuestionSolveScreen extends StatefulWidget {
     required this.questionIds,
     required this.knowledgeTitle,
     this.isLearnerMode = false,
+    this.initialIndex = 0,
   });
 
   final List<String> questionIds;
   final String knowledgeTitle;
   /// true のとき、紐づく知識を開く画面も学習者向け（編集不可・例文表示）
   final bool isLearnerMode;
+  /// 初期表示する問題インデックス。範囲外は自動で補正する。
+  final int initialIndex;
 
   @override
   State<QuestionSolveScreen> createState() => _QuestionSolveScreenState();
@@ -68,6 +71,14 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
   @override
   void initState() {
     super.initState();
+    final maxIndex = widget.questionIds.isEmpty ? 0 : widget.questionIds.length - 1;
+    if (widget.initialIndex < 0) {
+      _index = 0;
+    } else if (widget.initialIndex > maxIndex) {
+      _index = maxIndex;
+    } else {
+      _index = widget.initialIndex;
+    }
     _loadQuestion();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
@@ -133,11 +144,15 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
       try {
         row = await client
             .from('questions')
-            .select('id, knowledge_id, question_type, question_text, correct_answer, explanation, reference, choices, created_at, updated_at')
+            .select('id, knowledge_id, question_type, question_text, question_translation_ja, correct_answer, explanation, reference, choices, created_at, updated_at')
             .eq('id', id)
             .maybeSingle();
       } on PostgrestException catch (e) {
-        if (e.code == '42703' || (e.message.contains('reference') && e.message.contains('does not exist'))) {
+        final missingReference =
+            e.message.contains('reference') && e.message.contains('does not exist');
+        final missingTranslation = e.message.contains('question_translation_ja') &&
+            e.message.contains('does not exist');
+        if (e.code == '42703' || missingReference || missingTranslation) {
           row = await client
               .from('questions')
               .select('id, knowledge_id, question_type, question_text, correct_answer, explanation, choices, created_at, updated_at')
@@ -404,6 +419,11 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
       }
     }
 
+    // 解答ログ・学習状態の dirty を含め Pull→Push（他端末へ反映・取り込み）
+    if (!kIsWeb && SyncEngine.isInitialized) {
+      unawaited(SyncEngine.instance.syncIfOnline());
+    }
+
     if (!remoteLearningSaved && mounted) {
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
         SnackBar(
@@ -581,7 +601,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                 FilledButton.icon(
                   onPressed: canAdvance ? finish : null,
                   icon: const Icon(Icons.menu_book),
-                  label: const Text('知識に戻る'),
+                  label: const Text('完了'),
                 ),
             ],
           ),
@@ -630,7 +650,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
               TextButton.icon(
                 onPressed: () => Navigator.of(context).pop(),
                 icon: const Icon(Icons.arrow_back),
-                label: const Text('知識に戻る'),
+                label: const Text('閉じる'),
               ),
             ],
           ),
@@ -639,6 +659,8 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
     }
 
     final questionText = _question!['question_text']?.toString() ?? '';
+    final questionTranslationJa =
+        _question!['question_translation_ja']?.toString() ?? '';
     final explanation = _question!['explanation']?.toString() ?? '';
     final reference = _question!['reference']?.toString() ?? '';
     final choices = _currentChoices;
@@ -789,7 +811,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                           onTap: () => _onSelectChoice(i),
                           borderRadius: BorderRadius.circular(12),
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
@@ -850,7 +872,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                           onTap: _onSelectDontKnow,
                           borderRadius: BorderRadius.circular(12),
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
@@ -889,7 +911,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                           onTap: _onMarkAmbiguousIncorrect,
                           borderRadius: BorderRadius.circular(12),
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
@@ -942,7 +964,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                       children: [
                         for (int i = 0; i < choiceCount; i++)
                           Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.only(bottom: 8),
                             child: choiceCard(i, choices[i]),
                           ),
                         bottomExtraRow(),
@@ -999,7 +1021,7 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                     children: [
                       for (int i = 0; i < choiceCount; i++)
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.only(bottom: 8),
                           child: choiceCard(i, choices[i]),
                         ),
                       bottomExtraRow(),
@@ -1030,6 +1052,45 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                   ],
                 ),
               ),
+              if (questionTranslationJa.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest
+                        .withOpacity(0.8),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .outlineVariant
+                          .withOpacity(0.5),
+                      width: 1,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '問題文の和訳',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                      ),
+                      const SizedBox(height: 4),
+                      SelectableText(
+                        questionTranslationJa,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               if (reference.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 Container(
@@ -1091,7 +1152,14 @@ class _QuestionSolveScreenState extends State<QuestionSolveScreen> {
                             children: [
                               Icon(Icons.menu_book, size: 20, color: Theme.of(context).colorScheme.primary),
                               const SizedBox(width: 8),
-                              Expanded(child: SelectableText(k.title, style: Theme.of(context).textTheme.bodyMedium)),
+                              Expanded(
+                                child: Text(
+                                  k.title,
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
                               Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant),
                             ],
                           ),

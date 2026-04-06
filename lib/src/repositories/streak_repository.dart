@@ -23,7 +23,7 @@ class StreakInfo {
   /// 今回の再計算で [longest] が更新されたか
   final bool isNewRecord;
 
-  /// 表示すべきマイルストーン（まだ祝っていない最大の到達点）。なければ null
+  /// 表示すべきマイルストーン（まだ祝っていない到達点のうち最も手前のもの）。なければ null
   final int? milestoneToCelebrate;
 
   static StreakInfo zero() => const StreakInfo(current: 0, longest: 0);
@@ -43,23 +43,59 @@ class StreakRepository {
   static String todayKeyLocal() => _fmtDate(_dateOnlyLocal(DateTime.now()));
 
   static const _dailyGreetingSuffix = '_daily_greeting';
+  static const _lastGreetStreakSuffix = '_last_greet_streak';
 
-  /// その暦日にまだ「当日初回あいさつ」を出していないとき true。
-  static Future<bool> shouldShowDailyGreeting(String learnerId) async {
+  static const _milestoneThresholds = [3, 7, 14, 30, 60, 100];
+
+  /// 当日初回の連続日数ダイアログを出してよいとき true。
+  ///
+  /// **暦日ごとに最大1回**のみ。連続日数が変わらない日も、起動のたびに「〇日連続」を見せるため
+  /// 「前回と同じ日数なら出さない」条件は付けない。
+  static Future<bool> shouldShowDailyGreeting(
+    String learnerId,
+    int currentStreak,
+  ) async {
     if (learnerId.isEmpty) return false;
     final prefs = await SharedPreferences.getInstance();
     final id = _prefId(learnerId);
     final today = todayKeyLocal();
-    return prefs.getString('$id$_dailyGreetingSuffix') != today;
+    if (prefs.getString('$id$_dailyGreetingSuffix') == today) {
+      return false;
+    }
+    return true;
   }
 
   /// 当日分のあいさつを表示済みにする（マイルストーン祝辞の日はこちらで揃える）。
-  static Future<void> markDailyGreetingShown(String learnerId) async {
+  static Future<void> markDailyGreetingShown(
+    String learnerId,
+    int streakAtShow,
+  ) async {
     if (learnerId.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     final id = _prefId(learnerId);
     await prefs.setString('$id$_dailyGreetingSuffix', todayKeyLocal());
+    await prefs.setInt('$id$_lastGreetStreakSuffix', streakAtShow);
   }
+
+  static String _milestoneSeenKey(String id, int m) => '${id}_milestone_seen_$m';
+
+  /// 旧版の単一 int [_celebrated] を各マイルストーンの表示済みフラグへ移す（一度だけ）。
+  static Future<void> _migrateLegacyCelebrated(
+    SharedPreferences prefs,
+    String id,
+  ) async {
+    final legacy = prefs.getInt('${id}_celebrated');
+    if (legacy == null || legacy <= 0) return;
+    for (final m in _milestoneThresholds) {
+      if (m <= legacy) {
+        await prefs.setBool(_milestoneSeenKey(id, m), true);
+      }
+    }
+    await prefs.remove('${id}_celebrated');
+  }
+
+  static bool _milestoneSeen(SharedPreferences prefs, String id, int m) =>
+      prefs.getBool(_milestoneSeenKey(id, m)) ?? false;
 
   static String _fmtDate(DateTime d) =>
       '${d.year.toString().padLeft(4, '0')}-'
@@ -95,8 +131,9 @@ class StreakRepository {
 
     final prefs = await SharedPreferences.getInstance();
     final id = _prefId(learnerId);
+    await _migrateLegacyCelebrated(prefs, id);
+
     final prevLongestStored = prefs.getInt('${id}_longest') ?? 0;
-    final lastCelebrated = prefs.getInt('${id}_celebrated') ?? 0;
     final today = _dateOnlyLocal(DateTime.now());
     final todayKey = _fmtDate(today);
 
@@ -114,10 +151,6 @@ class StreakRepository {
       }
     }
 
-    if (current == 0) {
-      await prefs.setInt('${id}_celebrated', 0);
-    }
-
     final longestInHistory = _longestConsecutiveRun(daySet);
     final longest = math.max(longestInHistory, prevLongestStored);
     final isNewRecord = longest > prevLongestStored;
@@ -128,9 +161,10 @@ class StreakRepository {
 
     int? milestoneToCelebrate;
     if (current > 0) {
-      for (final m in const [3, 7, 14, 30, 60, 100]) {
-        if (current >= m && m > lastCelebrated) {
+      for (final m in _milestoneThresholds) {
+        if (current >= m && !_milestoneSeen(prefs, id, m)) {
           milestoneToCelebrate = m;
+          break;
         }
       }
     }
@@ -148,7 +182,7 @@ class StreakRepository {
     if (learnerId.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     final id = _prefId(learnerId);
-    await prefs.setInt('${id}_celebrated', milestone);
+    await prefs.setBool(_milestoneSeenKey(id, milestone), true);
   }
 
   Future<Set<String>> _loadStudyDaySet(String learnerId) async {

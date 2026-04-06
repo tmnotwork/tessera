@@ -1,4 +1,4 @@
-package com.example.tessera
+package com.sukimastudy.app
 
 import io.flutter.embedding.android.FlutterActivity
 

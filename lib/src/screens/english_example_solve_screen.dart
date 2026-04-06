@@ -712,7 +712,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
         final sid = rows.first['supabase_id']?.toString();
         if (sid != null && sid.isNotEmpty) newId = sid;
       }
-      unawaited(SyncEngine.instance.pushDirtyEnglishExampleStatesIfOnline());
+      await SyncEngine.instance.syncIfOnline();
     } else {
       newId = await EnglishExampleLearningStateRemote.upsertState(
         client: _client,
@@ -788,7 +788,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
   Widget build(BuildContext context) {
     if (widget.examples.isEmpty) {
       return Scaffold(
-        appBar: AppBar(title: Text(widget.subjectName ?? '例文読み上げ')),
+        appBar: AppBar(title: Text(widget.subjectName ?? '読み上げ')),
         body: const Center(child: Text('出題する例文がありません')),
       );
     }
@@ -796,7 +796,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
     if (_displayOrder.isEmpty) {
       return Scaffold(
         appBar: AppBar(
-          title: Text(widget.subjectName ?? '例文読み上げ'),
+          title: Text(widget.subjectName ?? '読み上げ'),
           actions: [
             IconButton(
               icon: const Icon(Icons.settings),
@@ -850,7 +850,7 @@ class _EnglishExampleSolveScreenState extends State<EnglishExampleSolveScreen> {
     if (desc != null && desc.isNotEmpty) {
       title += ' · $desc';
     }
-    title += ': ${widget.subjectName ?? '例文読み上げ'}';
+    title += ': ${widget.subjectName ?? '読み上げ'}';
     if (_displayOrder.length > 1) {
       title += '（${_orderPos + 1} / ${_displayOrder.length}）';
     }

@@ -5,9 +5,10 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/question_choice.dart';
+import '../models/question_dev_review_status.dart';
 import '../sync/ensure_synced_for_local_read.dart';
-import '../widgets/dev_completion_segmented.dart';
 import '../widgets/edit_intents.dart';
+import '../widgets/question_dev_review_segmented.dart';
 
 /// 四択問題の新規作成・編集画面
 class FourChoiceCreateScreen extends StatefulWidget {
@@ -33,14 +34,15 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
   final _formKey = GlobalKey<FormState>();
   final _questionController = TextEditingController();
   final _choiceControllers = List.generate(4, (_) => TextEditingController());
+  final _questionTranslationJaController = TextEditingController();
   final _explanationController = TextEditingController();
   final _referenceController = TextEditingController();
 
   int _correctIndex = 0;
   /// コア問題フラグ（true = 習得判定に含める必須問題、false = 追加演習用）
   bool _isCore = true;
-  /// 開発者が問題内容を確認済み（AI 生成のレビュー用）
-  bool _devCompleted = false;
+  /// 執筆・レビュー状態（ブランク／要確認／完成）
+  QuestionDevReviewStatus _reviewStatus = QuestionDevReviewStatus.blank;
   List<Map<String, dynamic>> _subjects = [];
   List<Map<String, dynamic>> _knowledgeList = [];
   String? _selectedSubjectId;
@@ -64,6 +66,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
   void dispose() {
     _questionController.dispose();
     for (final c in _choiceControllers) c.dispose();
+    _questionTranslationJaController.dispose();
     _explanationController.dispose();
     _referenceController.dispose();
     super.dispose();
@@ -109,7 +112,13 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
         q = await client.from('questions').select().eq('id', id).maybeSingle();
       } on PostgrestException catch (e) {
         if (e.code == '42703' || (e.message.contains('reference') && e.message.contains('does not exist'))) {
-          q = await client.from('questions').select('id, question_text, explanation, correct_answer, knowledge_id, choices').eq('id', id).maybeSingle();
+          q = await client
+              .from('questions')
+              .select(
+                'id, question_text, question_translation_ja, explanation, reference, correct_answer, knowledge_id, choices, dev_completed, dev_review_status',
+              )
+              .eq('id', id)
+              .maybeSingle();
         } else {
           rethrow;
         }
@@ -117,6 +126,7 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
       if (q == null || !mounted) return;
 
       final questionText = q['question_text']?.toString() ?? '';
+      final questionTranslationJa = q['question_translation_ja']?.toString() ?? '';
       final explanation = q['explanation']?.toString() ?? '';
       final reference = q['reference']?.toString() ?? '';
       final correctAnswer = q['correct_answer']?.toString() ?? '';
@@ -169,14 +179,15 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
       }
 
       if (!mounted) return;
-      final devDone = q['dev_completed'] == true;
+      final review = QuestionDevReviewStatus.fromRemote(q['dev_review_status'], q['dev_completed']);
       setState(() {
         _questionController.text = questionText;
+        _questionTranslationJaController.text = questionTranslationJa;
         _explanationController.text = explanation;
         _referenceController.text = reference;
         for (var i = 0; i < 4; i++) _choiceControllers[i].text = choiceTexts[i];
         _correctIndex = correctIdx;
-        _devCompleted = devDone;
+        _reviewStatus = review;
         _loadingQuestion = false;
       });
 
@@ -274,6 +285,9 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
     try {
       final client = Supabase.instance.client;
       final correctAnswer = choices[_correctIndex];
+      final questionTranslationJa = _questionTranslationJaController.text.trim().isEmpty
+          ? null
+          : _questionTranslationJaController.text.trim();
       final explanation = _explanationController.text.trim().isEmpty ? null : _explanationController.text.trim();
       final reference = _referenceController.text.trim().isEmpty ? null : _referenceController.text.trim();
 
@@ -281,9 +295,11 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
         final questionId = widget.questionId!;
         final updatePayload = <String, dynamic>{
           'question_text': questionText,
+          'question_translation_ja': questionTranslationJa,
           'correct_answer': correctAnswer,
           'explanation': explanation,
-          'dev_completed': _devCompleted,
+          'dev_completed': _reviewStatus.devCompletedBool,
+          'dev_review_status': _reviewStatus.apiValue,
         };
         if (reference != null) updatePayload['reference'] = reference;
         try {
@@ -291,8 +307,13 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
         } on PostgrestException catch (e) {
           if (e.code == '42703' || (e.message.contains('reference') && e.message.contains('does not exist'))) {
             if (e.message.contains('dev_completed')) updatePayload.remove('dev_completed');
+            if (e.message.contains('dev_review_status')) updatePayload.remove('dev_review_status');
             if (e.message.contains('reference') && e.message.contains('does not exist')) {
               updatePayload.remove('reference');
+            }
+            if (e.message.contains('question_translation_ja') &&
+                e.message.contains('does not exist')) {
+              updatePayload.remove('question_translation_ja');
             }
             await client.from('questions').update(updatePayload).eq('id', questionId);
           } else {
@@ -340,9 +361,11 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
           'knowledge_id': knowledgeId,
           'question_type': 'multiple_choice',
           'question_text': questionText,
+          'question_translation_ja': questionTranslationJa,
           'correct_answer': correctAnswer,
           'explanation': explanation,
-          'dev_completed': _devCompleted,
+          'dev_completed': _reviewStatus.devCompletedBool,
+          'dev_review_status': _reviewStatus.apiValue,
         };
         if (reference != null) insertPayload['reference'] = reference;
         dynamic inserted;
@@ -351,8 +374,13 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
         } on PostgrestException catch (e) {
           if (e.code == '42703' || (e.message.contains('reference') && e.message.contains('does not exist'))) {
             if (e.message.contains('dev_completed')) insertPayload.remove('dev_completed');
+            if (e.message.contains('dev_review_status')) insertPayload.remove('dev_review_status');
             if (e.message.contains('reference') && e.message.contains('does not exist')) {
               insertPayload.remove('reference');
+            }
+            if (e.message.contains('question_translation_ja') &&
+                e.message.contains('does not exist')) {
+              insertPayload.remove('question_translation_ja');
             }
             inserted = await client.from('questions').insert(insertPayload).select('id').single();
           } else {
@@ -532,6 +560,27 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
             }),
             const SizedBox(height: 16),
             Text(
+              '問題文の和訳（任意）',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _questionTranslationJaController,
+              decoration: const InputDecoration(
+                hintText: '正解表示時に学習者へ表示する和訳を入力。',
+                border: OutlineInputBorder(),
+                alignLabelWithHint: true,
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+              maxLines: null,
+              minLines: 3,
+              textAlignVertical: TextAlignVertical.top,
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            const SizedBox(height: 20),
+            Text(
               '解説（任意）',
               style: Theme.of(context).textTheme.labelLarge?.copyWith(
                 fontWeight: FontWeight.w500,
@@ -611,16 +660,16 @@ class _FourChoiceCreateScreenState extends State<FourChoiceCreateScreen> {
               onChanged: _loadingKnowledge ? null : (v) => setState(() => _selectedKnowledgeId = v),
             ),
             const SizedBox(height: 16),
+            QuestionDevReviewSegmented(
+              value: _reviewStatus,
+              onChanged: (v) => setState(() => _reviewStatus = v),
+            ),
+            const SizedBox(height: 8),
             SwitchListTile(
               title: const Text('コア問題'),
               subtitle: const Text('オン: 習得判定に含める必須問題／オフ: 追加演習用'),
               value: _isCore,
               onChanged: (v) => setState(() => _isCore = v),
-            ),
-            DevCompletionSegmented(
-              value: _devCompleted,
-              enabled: !_saving && !_loadingQuestion,
-              onChanged: (v) => setState(() => _devCompleted = v),
             ),
             const SizedBox(height: 32),
             Tooltip(
